@@ -154,6 +154,7 @@ template class CachedBuffer<int>;
 template class CachedBuffer<int64_t>;
 template class CachedBuffer<char>;
 template class CachedBuffer<double>;
+template class CachedBuffer<common::tianmu_int128_t>;
 
 }  // namespace core
 }  // namespace Tianmu

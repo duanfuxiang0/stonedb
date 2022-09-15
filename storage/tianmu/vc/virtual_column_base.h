@@ -44,6 +44,7 @@ namespace vcolumn {
  *
  */
 
+
 class VirtualColumnBase : public core::Column {
  public:
   struct VarMap {
@@ -487,6 +488,7 @@ class VirtualColumnBase : public core::Column {
   virtual types::RCValueObject GetValueImpl(const core::MIIterator &, bool) = 0;
 
   virtual int64_t GetMinInt64Impl(const core::MIIterator &) = 0;
+
   virtual int64_t GetMinInt64ExactImpl(const core::MIIterator &) { return common::NULL_VALUE_64; }
   virtual int64_t GetMaxInt64ExactImpl(const core::MIIterator &) { return common::NULL_VALUE_64; }
   virtual int64_t GetMaxInt64Impl(const core::MIIterator &) = 0;

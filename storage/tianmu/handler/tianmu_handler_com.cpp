@@ -526,7 +526,7 @@ static MYSQL_SYSVAR_INT(ini_cachesizethreshold, tianmu_sysvar_cachesizethreshold
                         0, 1024, 0);
 static MYSQL_SYSVAR_INT(ini_cachereleasethreshold, tianmu_sysvar_cachereleasethreshold, PLUGIN_VAR_INT, "-", NULL,
                         NULL, 100, 0, 100000, 0);
-static MYSQL_SYSVAR_BOOL(insert_delayed, tianmu_sysvar_insert_delayed, PLUGIN_VAR_READONLY, "-", NULL, NULL, TRUE);
+static MYSQL_SYSVAR_BOOL(insert_delayed, tianmu_sysvar_insert_delayed, PLUGIN_VAR_READONLY, "-", NULL, NULL, FALSE);
 static MYSQL_SYSVAR_INT(insert_cntthreshold, tianmu_sysvar_insert_cntthreshold, PLUGIN_VAR_READONLY, "-", NULL, NULL,
                         2, 0, 1000, 0);
 static MYSQL_SYSVAR_INT(insert_numthreshold, tianmu_sysvar_insert_numthreshold, PLUGIN_VAR_READONLY, "-", NULL, NULL,

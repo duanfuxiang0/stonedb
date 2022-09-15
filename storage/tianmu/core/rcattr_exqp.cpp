@@ -24,6 +24,7 @@
 #include "core/cq_term.h"
 #include "core/pack_guardian.h"
 #include "core/pack_str.h"
+#include "core/pack_dec.h"
 #include "core/rc_attr.h"
 #include "core/rc_attr_typeinfo.h"
 #include "core/tools.h"
@@ -68,6 +69,9 @@ void RCAttr::EvaluatePack(MIUpdatingIterator &mit, int dim, Descriptor &d) {
       EvaluatePack_BetweenString_UTF(mit, dim, d);
     else
       EvaluatePack_BetweenString(mit, dim, d);
+  } else if (GetPackType() == common::PackType::DEC &&
+             (d.op == common::Operator::O_BETWEEN || d.op == common::Operator::O_NOT_BETWEEN)) {
+      EvaluatePack_BetweenDecimal(mit, dim, d);
   } else if (d.op == common::Operator::O_LIKE || d.op == common::Operator::O_NOT_LIKE) {
     if (types::RequiresUTFConversions(d.GetCollation()))
       EvaluatePack_Like_UTF(mit, dim, d);
@@ -79,6 +83,9 @@ void RCAttr::EvaluatePack(MIUpdatingIterator &mit, int dim, Descriptor &d) {
       EvaluatePack_InString_UTF(mit, dim, d);
     else
       EvaluatePack_InString(mit, dim, d);
+  } else if (GetPackType() == common::PackType::DEC &&
+             (d.op == common::Operator::O_IN || d.op == common::Operator::O_NOT_IN)) {
+    EvaluatePack_InDecimal(mit, dim, d);
   } else if (GetPackType() == common::PackType::INT &&
              (d.op == common::Operator::O_IN || d.op == common::Operator::O_NOT_IN))
     EvaluatePack_InNum(mit, dim, d);
@@ -565,6 +572,65 @@ void RCAttr::EvaluatePack_InString_UTF(MIUpdatingIterator &mit, int dim, Descrip
   } while (mit.IsValid() && !mit.PackrowStarted());
 }
 
+void RCAttr::EvaluatePack_InDecimal(MIUpdatingIterator &mit, int dim, Descriptor &d) {
+  MEASURE_FET("RCAttr::EvaluatePack_InDecimal(...)");
+  int pack = mit.GetCurPackrow(dim);
+  if (pack == -1) {
+    mit.ResetCurrentPack();
+    mit.NextPackrow();
+    return;
+  }
+
+  // added trivial case due to OR tree
+  if (get_dpn(pack).NullOnly()) {
+    mit.ResetCurrentPack();
+    mit.NextPackrow();
+    return;
+  }
+
+  auto &dpn = get_dpn(pack);
+  auto p = get_packN(pack);
+
+  DEBUG_ASSERT(dynamic_cast<vcolumn::MultiValColumn *>(d.val1.vc) != NULL);
+  vcolumn::MultiValColumn *multival_column = static_cast<vcolumn::MultiValColumn *>(d.val1.vc);
+  bool lookup_to_num = ATI::IsStringType(TypeName());
+
+  common::Tribool res;
+  std::unique_ptr<types::RCDataType> value(ValuePrototype(lookup_to_num).Clone());
+  bool not_in = (d.op == common::Operator::O_NOT_IN);
+  int arraysize = 0;
+  if (d.val1.cond_numvalue != nullptr) arraysize = d.val1.cond_numvalue->capacity();
+  if (GetPackOntologicalStatus(pack) == PackOntologicalStatus::NULLS_ONLY) {
+    mit.ResetCurrentPack();
+    mit.NextPackrow();
+  } else {
+    // only nulls and single value
+    // pack does not exist
+    do {
+      if (IsNull(mit[dim]))
+        mit.ResetCurrent();
+      else {
+        // find the first non-null and set the rest basing on it.
+        // const RCValueObject& val = GetValue(mit[dim], lookup_to_num);
+        // note: res may be UNKNOWN for NOT IN (...null...)
+        res = multival_column->Contains(mit, GetValueData(mit[dim], *value, lookup_to_num));
+        if (not_in) res = !res;
+        if (res == true) {
+          if (dpn.nn != 0)
+            EvaluatePack_NotNull(mit, dim);
+          else
+            mit.NextPackrow();
+        } else {
+          mit.ResetCurrentPack();
+          mit.NextPackrow();
+        }
+        break;
+      }
+      ++mit;
+    } while (mit.IsValid() && !mit.PackrowStarted());
+  }
+}
+
 void RCAttr::EvaluatePack_InNum(MIUpdatingIterator &mit, int dim, Descriptor &d) {
   MEASURE_FET("RCAttr::EvaluatePack_InNum(...)");
   int pack = mit.GetCurPackrow(dim);
@@ -699,6 +765,69 @@ void RCAttr::EvaluatePack_BetweenString(MIUpdatingIterator &mit, int dim, Descri
       // IsNull() below means +/-inf
       bool res = (d.sharp && ((v1.IsNull() || v > v1) && (v2.IsNull() || v < v2))) ||
                  (!d.sharp && ((v1.IsNull() || v >= v1) && (v2.IsNull() || v <= v2)));
+      if (d.op == common::Operator::O_NOT_BETWEEN) res = !res;
+      if (!res) mit.ResetCurrent();
+    }
+    ++mit;
+  } while (mit.IsValid() && !mit.PackrowStarted());
+}
+
+void RCAttr::EvaluatePack_BetweenDecimal(MIUpdatingIterator &mit, int dim, Descriptor &d) {
+  MEASURE_FET("RCAttr::EvaluatePack_BetweenDecimal(...)");
+  int pack = mit.GetCurPackrow(dim);
+  if (pack == -1) {
+    mit.ResetCurrentPack();
+    mit.NextPackrow();
+    return;
+  }
+  // added trivial case due to OR tree
+  if (get_dpn(pack).NullOnly()) {
+    mit.ResetCurrentPack();
+    mit.NextPackrow();
+    return;
+  }
+
+  auto p = get_packD(pack);
+  if (p == NULL) {  // => nulls only
+    mit.ResetCurrentPack();
+    mit.NextPackrow();
+    return;
+  }
+
+  types::BString v1, v2;
+  d.val1.vc->GetValueString(v1, mit);
+  d.val2.vc->GetValueString(v2, mit);
+
+  bool use_trie = false;
+  uint16_t trie_id;
+  if (v1 == v2 && p->IsTrie()) {
+    use_trie = p->Lookup(v1, trie_id);
+    if (!use_trie) {
+      mit.ResetCurrentPack();
+      mit.NextPackrow();
+      return;
+    }
+  }
+
+  types::RCDecimal dv1, dv2;
+  dv1 = *(d.val1.vc->GetValue(mit).Get());
+  dv2 = *(d.val2.vc->GetValue(mit).Get());
+
+  do {
+    int inpack = mit.GetCurInpack(dim);  // row number inside the pack
+    if (mit[dim] == common::NULL_VALUE_64 || p->IsNull(inpack)) {
+      mit.ResetCurrent();
+    } else if (use_trie) {
+      if (p->IsNotMatched(inpack, trie_id)) mit.ResetCurrent();
+    } else {
+      types::BString v(p->GetValueBinary(inpack));  // change to materialized in case
+                                                    // of problems, but the pack should
+                                                    // be locked and unchanged here
+      types::RCDecimal dv;
+      dv.Assign(v, m_share->ColType().GetScale(), m_share->ColType().GetPrecision(), TypeName());
+      // IsNull() below means +/-inf
+      bool res = (d.sharp && ((v1.IsNull() || dv > dv1) && (v2.IsNull() || dv < dv2))) ||
+                 (!d.sharp && ((v1.IsNull() || dv >= dv1) && (v2.IsNull() || dv <= dv2)));
       if (d.op == common::Operator::O_NOT_BETWEEN) res = !res;
       if (!res) mit.ResetCurrent();
     }

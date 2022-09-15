@@ -60,6 +60,7 @@ template class AttrBuffer<int>;
 template class AttrBuffer<int64_t>;
 template class AttrBuffer<double>;
 template class AttrBuffer<types::BString>;
+template class AttrBuffer<common::tianmu_int128_t>;
 
 TempTable::Attr::Attr(const Attr &a) : PhysicalColumn(a) {
   mode = a.mode;
@@ -479,7 +480,8 @@ void TempTable::Attr::GetValueString(types::BString &s, int64_t obj) {
       break;
     }
     case common::CT::NUM: {
-      types::RCNum rcn((*(AttrBuffer<int64_t> *)buffer)[obj], Type().GetScale());
+      types::RCDecimal rcn((*(AttrBuffer<common::tianmu_int128_t> *)buffer)[obj], 
+            Type().GetScale(), Type().GetPrecision(), common::CT::NUM);
       s = rcn.ToBString();
       break;
     }

@@ -19,6 +19,7 @@
 #pragma once
 
 #include <cstdint>
+#include "boost/multiprecision/cpp_int.hpp"
 
 namespace Tianmu {
 namespace common {
@@ -55,7 +56,11 @@ constexpr size_t MAX_CMPR_SIZE = 0x007D000000;
 using PACK_INDEX = uint32_t;
 constexpr PACK_INDEX INVALID_PACK_INDEX = -1;
 
+using tianmu_uint128_t = boost::multiprecision::uint128_t;
+using tianmu_int128_t = boost::multiprecision::int128_t;
+
 }  // namespace common
+
 }  // namespace Tianmu
 
 #endif  // TIANMU_COMMON_DEFS_H_

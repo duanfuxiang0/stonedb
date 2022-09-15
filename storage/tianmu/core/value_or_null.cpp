@@ -19,6 +19,7 @@
 
 #include "common/assert.h"
 #include "types/rc_num.h"
+#include "types/rc_decimal.h"
 
 namespace Tianmu {
 namespace core {
@@ -37,6 +38,11 @@ void ValueOrNull::SetBString(const types::BString &rcs) {
     }
     len = rcs.len;
   }
+}
+
+void ValueOrNull::SetRCDecimal(const types::BString &rcs, short prec, short scale) {
+  SetBString(rcs);
+  SetDecimalPS(prec, scale);
 }
 
 void ValueOrNull::MakeStringOwner() {
@@ -68,6 +74,21 @@ void ValueOrNull::GetBString(types::BString &rcs) const {
   }
 }
 
+void ValueOrNull::GetRCDecimal(types::RCDecimal &rcdc) const {
+  if (null) {
+    types::RCDecimal rcs_null;
+    rcdc = rcs_null;
+  } else {
+    short prec, scale;
+    GetDecimalPS(prec, scale);
+    if (sp) {
+      types::BString str;
+      GetBString(str);
+      rcdc.Assign(str, scale, prec, common::CT::NUM);
+    }
+  }
+}
+
 ValueOrNull::ValueOrNull(ValueOrNull const &von)
     : x(von.x),
       sp(von.string_owner ? new char[von.len + 1] : von.sp),
@@ -95,6 +116,19 @@ ValueOrNull::ValueOrNull(types::RCDateTime const &rcdt) : x(rcdt.GetInt64()), nu
 ValueOrNull::ValueOrNull(types::BString const &rcs)
     : x(common::NULL_VALUE_64), sp(new char[rcs.len + 1]), len(rcs.len), string_owner(true), null(rcs.IsNull()) {
   std::memcpy(sp, rcs.val, len);
+  sp[len] = 0;
+}
+
+ValueOrNull::ValueOrNull(types::RCDecimal const &rcdc) {
+  // x(common::NULL_VALUE_64), sp(new char[rcs.len + 1]), len(rcs.len), string_owner(true), null(rcdc.IsNull()) {
+  short precision = rcdc.Precision();
+  short scale = rcdc.Scale();
+  SetDecimalPS(precision, scale);
+  types::BString str = rcdc.ToBString();
+  sp = new char[str.size() + 1];
+  len = str.size();
+  std::memcpy(sp, str.begin(), len);
+  null = rcdc.IsNull();
   sp[len] = 0;
 }
 

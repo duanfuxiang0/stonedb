@@ -16,6 +16,7 @@
 */
 
 #include "types/rc_num.h"
+#include "types/rc_decimal.h"
 
 namespace Tianmu {
 namespace types {
@@ -131,6 +132,14 @@ RCValueObject::operator RCDateTime &() const {
 
   TIANMU_ERROR("Bad cast in RCValueObject::RCDateTime&()");
   return static_cast<RCDateTime &>(*value);
+}
+
+RCValueObject::operator RCDecimal &() const {
+  if (IsNull()) return RCDecimal::NullValue();
+  if (GetValueType() == ValueTypeEnum::NUMERIC_TYPE) return static_cast<RCDecimal &>(*value);
+
+  TIANMU_ERROR("Bad cast in RCValueObject::RCDecimal &()");
+  return static_cast<RCDecimal &>(*value);
 }
 
 BString RCValueObject::ToBString() const {

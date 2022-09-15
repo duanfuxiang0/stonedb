@@ -40,6 +40,7 @@
 #include "system/rc_system.h"
 #include "types/rc_data_types.h"
 #include "types/rc_num.h"
+#include "types/rc_decimal.h"
 #include "util/fs.h"
 
 namespace Tianmu {
@@ -48,6 +49,10 @@ class Transaction;
 class Filter;
 class MIUpdatingIterator;
 class TextStat;
+
+class PackStr;
+class PackInt;
+class PackDec;
 
 //   Attribute (universal class)
 
@@ -156,6 +161,10 @@ class RCAttr final : public mm::TraceableObject, public PhysicalColumn, public P
     if (dpn.NullOnly()) return true;
 
     if ((pack_type == common::PackType::STR) && !dpn.Trivial()) {
+      DEBUG_ASSERT(0);
+      return true;
+    }
+    if ((pack_type == common::PackType::DEC) && !dpn.Trivial()) {
       DEBUG_ASSERT(0);
       return true;
     }
@@ -316,6 +325,7 @@ class RCAttr final : public mm::TraceableObject, public PhysicalColumn, public P
   void UpdateRSI_Bloom(common::PACK_INDEX pi);
   void LoadDataPackN(size_t i, loader::ValueCache *nvs);
   void LoadDataPackS(size_t i, loader::ValueCache *nvs);
+  void LoadDataPackD(size_t i, loader::ValueCache *nvs);
 
   void CompareAndSetCurrentMin(const types::BString &tstmp, types::BString &min, bool set);
   void CompareAndSetCurrentMax(const types::BString &tstmp, types::BString &min);
@@ -336,9 +346,13 @@ class RCAttr final : public mm::TraceableObject, public PhysicalColumn, public P
   Pack *get_pack(size_t i);
   PackInt *get_packN(size_t i) { return reinterpret_cast<PackInt *>(get_pack(i)); }
   PackStr *get_packS(size_t i) { return reinterpret_cast<PackStr *>(get_pack(i)); }
+  PackDec *get_packD(size_t i) { return reinterpret_cast<PackDec *>(get_pack(i)); }
+
   Pack *get_pack(size_t i) const;
   PackInt *get_packN(size_t i) const { return reinterpret_cast<PackInt *>(get_pack(i)); }
   PackStr *get_packS(size_t i) const { return reinterpret_cast<PackStr *>(get_pack(i)); }
+  PackDec *get_packD(size_t i) const { return reinterpret_cast<PackDec *>(get_pack(i)); }
+
   DPN &get_last_dpn() { return *m_share->get_dpn_ptr(m_idx.back()); }
   const DPN &get_last_dpn() const { return *m_share->get_dpn_ptr(m_idx.back()); }
   void EvaluatePack_IsNull(MIUpdatingIterator &mit, int dim);
@@ -346,9 +360,11 @@ class RCAttr final : public mm::TraceableObject, public PhysicalColumn, public P
   void EvaluatePack_Like(MIUpdatingIterator &mit, int dim, Descriptor &d);
   void EvaluatePack_Like_UTF(MIUpdatingIterator &mit, int dim, Descriptor &d);
   void EvaluatePack_InString(MIUpdatingIterator &mit, int dim, Descriptor &d);
+  void EvaluatePack_InDecimal(MIUpdatingIterator &mit, int dim, Descriptor &d);
   void EvaluatePack_InString_UTF(MIUpdatingIterator &mit, int dim, Descriptor &d);
   void EvaluatePack_InNum(MIUpdatingIterator &mit, int dim, Descriptor &d);
   void EvaluatePack_BetweenString(MIUpdatingIterator &mit, int dim, Descriptor &d);
+  void EvaluatePack_BetweenDecimal(MIUpdatingIterator &mit, int dim, Descriptor &d);
   void EvaluatePack_BetweenString_UTF(MIUpdatingIterator &mit, int dim, Descriptor &d);
   void EvaluatePack_BetweenInt(MIUpdatingIterator &mit, int dim, Descriptor &d);
   void EvaluatePack_BetweenReal(MIUpdatingIterator &mit, int dim, Descriptor &d);

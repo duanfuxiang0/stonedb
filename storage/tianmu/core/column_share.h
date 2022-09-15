@@ -25,6 +25,7 @@
 #include "common/mysql_gate.h"
 #include "core/column_type.h"
 #include "core/dpn.h"
+#include "core/pack_dec.h"
 #include "util/fs.h"
 
 namespace Tianmu {
@@ -94,6 +95,17 @@ class ColumnShare final {
     auto i = std::distance(start, dpn);
     ASSERT(i >= 0 && size_t(i) < cap, "bad index " + std::to_string(i));
     return i;
+  }
+
+  static common::PackType GetPackType(ColumnType type, common::CT attr_type) {
+    if (type.IsLookup() || ATI::IsInteger32Type(attr_type) || ATI::IsDateTimeType(attr_type) || 
+      attr_type == common::CT::BIGINT || attr_type == common::CT::FLOAT || attr_type == common::CT::REAL) {
+      return common::PackType::INT;
+    } else if (ATI::IsDecimalType(attr_type)) {
+      return common::PackType::DEC;
+    } else {
+      return common::PackType::STR;
+    }
   }
 
  private:

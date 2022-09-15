@@ -449,12 +449,24 @@ void ParsingStrategy::GetValue(const char *value_ptr, size_t value_size, ushort 
   } else {
     types::BString tmp_string(value_ptr, value_size);
     // reaching here, the parsing function should not be null
-    auto function = types::ValueParserForText::GetParsingFuntion(ati);
-    if (function(tmp_string, *reinterpret_cast<int64_t *>(buffer.Prepare(sizeof(int64_t)))) ==
-        common::ErrorCode::FAILED)
-      throw common::FormatException(0,
-                                    col);  // TODO: throw appropriate exception
-    buffer.ExpectedSize(sizeof(int64_t));
+
+    if (core::ATI::IsDecimalType(ati.Type())) {
+      size_t len = sizeof(common::tianmu_int128_t);
+      auto function = types::ValueParserForText::GetParsingFuntionDecimal(ati);
+      if (function(tmp_string, 
+        *reinterpret_cast<common::tianmu_int128_t *>(buffer.Prepare(len))) ==
+          common::ErrorCode::FAILED)
+        throw common::FormatException(0,
+                                      col);  // TODO: throw appropriate exception
+      buffer.ExpectedSize(len);
+    } else {
+      auto function = types::ValueParserForText::GetParsingFuntion(ati);
+      if (function(tmp_string, *reinterpret_cast<int64_t *>(buffer.Prepare(sizeof(int64_t)))) ==
+          common::ErrorCode::FAILED)
+        throw common::FormatException(0,
+                                      col);  // TODO: throw appropriate exception
+      buffer.ExpectedSize(sizeof(int64_t));
+    }
   }
 }
 

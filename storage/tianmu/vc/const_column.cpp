@@ -122,7 +122,12 @@ types::RCValueObject ConstColumn::GetValueImpl([[maybe_unused]] const core::MIIt
   if (core::ATI::IsIntegerType(TypeName())) return types::RCNum(value.Get64(), -1, false, TypeName());
   if (core::ATI::IsDateTimeType(TypeName())) return types::RCDateTime(value.Get64(), TypeName());
   if (core::ATI::IsRealType(TypeName())) return types::RCNum(value.Get64(), 0, true, TypeName());
-  if (lookup_to_num || TypeName() == common::CT::NUM) return types::RCNum((int64_t)value.Get64(), Type().GetScale());
+  if (core::ATI::IsDecimalType(TypeName())) {
+    types::RCDecimal rcdc;
+    value.GetRCDecimal(rcdc);
+    return rcdc;
+  }
+  if (lookup_to_num) return types::RCNum((int64_t)value.Get64(), Type().GetScale());
   DEBUG_ASSERT(!"Illegal execution path");
   return types::RCValueObject();
 }

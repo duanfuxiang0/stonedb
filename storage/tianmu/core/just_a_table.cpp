@@ -38,6 +38,15 @@ ValueOrNull JustATable::GetComplexValue(const int64_t obj, const int attr) {
     str_to_datetime(s.GetDataBytesPointer(), s.len, &myt, TIME_DATETIME_ONLY, &not_used);
     return ValueOrNull(types::RCDateTime(myt, common::CT::TIMESTAMP).GetInt64());
   }
+
+  if (ATI::IsDecimalType(ct.GetTypeName())) {
+    ValueOrNull val;
+    types::BString s;
+    GetTable_S(s, obj, attr);
+    val.SetRCDecimal(s, ct.GetPrecision(), ct.GetScale());
+    return val;
+  }
+
   if (ct.IsFixed() || ct.IsFloat() || ct.IsDateTime()) return ValueOrNull(GetTable64(obj, attr));
   if (ct.IsString()) {
     ValueOrNull val;

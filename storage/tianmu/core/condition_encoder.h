@@ -41,6 +41,7 @@ class ConditionEncoder {
   void DoEncode();
   bool IsTransformationNeeded();
   void TransformINs();
+  void TransformINDecimals();
   void TransformOtherThanINsOnNotLookup();
   void TransformLIKEs();
   void TextTransformation();
@@ -56,6 +57,7 @@ class ConditionEncoder {
   void TransformLIKEsIntoINsOnLookup();
   void TransformIntoINsOnLookup();
   void TransformOtherThanINsOnNumerics();
+  void TransformOtherThanINsOnDecimals();
   void LookupExpressionTransformation();
 
   inline common::CT AttrTypeName() const { return attr->TypeName(); }

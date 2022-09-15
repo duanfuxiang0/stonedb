@@ -24,6 +24,7 @@
 #include "common/common_definitions.h"
 #include "common/exception.h"
 #include "core/bin_tools.h"
+#include "core/column_type.h"
 #include "core/rc_attr_typeinfo.h"
 #include "system/txt_utils.h"
 
@@ -32,6 +33,7 @@ namespace types {
 
 class BString;
 class RCNum;
+class RCDecimal;
 
 bool AreComparable(common::CT att1, common::CT att2);
 
@@ -123,7 +125,7 @@ union DT {
   }
 };
 
-enum class ValueTypeEnum { NULL_TYPE, DATE_TIME_TYPE, NUMERIC_TYPE, STRING_TYPE };
+enum class ValueTypeEnum { NULL_TYPE, DATE_TIME_TYPE, NUMERIC_TYPE, DECIMAL_TYPE, STRING_TYPE };
 
 class RCDataType {
  public:
@@ -422,6 +424,9 @@ class RCValueObject {
   operator RCNum &() const;
   // operator BString&() const;
   operator RCDateTime &() const;
+
+  operator RCDecimal &() const;
+
   uint GetHashCode() const;
   char *GetDataBytesPointer() const { return value->GetDataBytesPointer(); }
 
@@ -587,6 +592,37 @@ static inline uint64_t Uint64PowOfTen(short exponent) {
     return v[exponent];
   else
     return (uint64_t)PowOfTen(exponent);
+}
+
+static inline common::tianmu_uint128_t Uint128PowOfTen(short exponent) {
+  DEBUG_ASSERT(exponent >= 0 && exponent < 39);
+  static const short EXP = 19;
+  static common::tianmu_uint128_t v[] =  {1ULL,
+                                  10ULL,
+                                  100ULL,
+                                  1000ULL,
+                                  10000ULL,
+                                  100000ULL,
+                                  1000000ULL,
+                                  10000000ULL,
+                                  100000000ULL,
+                                  1000000000ULL,
+                                  10000000000ULL,
+                                  100000000000ULL,
+                                  1000000000000ULL,
+                                  10000000000000ULL,
+                                  100000000000000ULL,
+                                  1000000000000000ULL,
+                                  10000000000000000ULL,
+                                  100000000000000000ULL,
+                                  1000000000000000000ULL,
+                                  10000000000000000000ULL};
+
+  if (exponent >= 0 && exponent <= EXP)
+    return v[exponent];
+  else {
+    return v[exponent-EXP] * v[EXP];
+  }
 }
 
 static inline int64_t Int64PowOfTen(short exponent) { return int64_t(Uint64PowOfTen(exponent)); }

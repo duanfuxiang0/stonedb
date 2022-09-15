@@ -78,6 +78,10 @@ bool Engine::ConvertToField(Field *field, types::RCDataType &rcitem, std::vector
       my_decimal md;
       if (rcitem.Type() == common::CT::REAL) {
         double2decimal((double)((types::RCNum &)(rcitem)), &md);
+      } else if (rcitem.Type() == common::CT::NUM) {
+        types::BString real = ((types::RCDecimal&)(rcitem)).ToReal();
+        char* end = real.end();
+        string2decimal(real.begin(), &md, &end);
       } else {
         int is_null;
         Engine::Convert(is_null, &md, rcitem);
@@ -280,17 +284,17 @@ int Engine::Convert(int &is_null, my_decimal *value, types::RCDataType &rcitem, 
     if (!Engine::AreConvertible(rcitem, MYSQL_TYPE_NEWDECIMAL)) return false;
     is_null = 0;
     if (rcitem.Type() == common::CT::NUM) {
-      types::RCNum *rcn = (types::RCNum *)(&rcitem);
-      int intg = rcn->GetDecIntLen();
-      int frac = rcn->GetDecFractLen();
+      types::RCDecimal *rcdc = (types::RCDecimal *)(&rcitem);
+      int intg = rcdc->GetDecIntLen();
+      int frac = rcdc->GetDecFractLen();
       int intg1 = ROUND_UP(intg);
       int frac1 = ROUND_UP(frac);
       value->intg = intg;
       value->frac = frac;
-      int64_t ip = rcn->GetIntPart();
-      int64_t fp = (rcn->ValueInt() % (int64_t)types::Uint64PowOfTen(rcn->Scale()));
+      common::tianmu_int128_t ip = rcdc->GetIntPart();
+      common::tianmu_int128_t fp = (rcdc->ValueInt() % types::Uint128PowOfTen(rcdc->Scale()));
       bool special_value_minbigint = false;
-      if (uint64_t(ip) == 0x8000000000000000ULL) {
+      if (ip == common::MINUS_INF_128) {
         // a special case, cannot be converted like that
         special_value_minbigint = true;
         ip += 1;  // just for now...
@@ -321,18 +325,18 @@ int Engine::Convert(int &is_null, my_decimal *value, types::RCDataType &rcitem, 
         tmp /= 10;
         no_digs++;
       }
-      int tmp_prec = rcn->Scale();
+      int tmp_prec = rcdc->Scale();
 
       for (; frac1; frac1--) {
         int digs_to_take = tmp_prec - (frac1 - 1) * DIG_PER_DEC1;
         if (digs_to_take < 0) digs_to_take = 0;
         tmp_prec -= digs_to_take;
         int cur_pow = DIG_PER_DEC1 - digs_to_take;
-        *buf-- = decimal_digit_t((fp % (int64_t)types::Uint64PowOfTen(digs_to_take)) *
-                                 (int64_t)types::Uint64PowOfTen(cur_pow));
-        fp /= (int64_t)types::Uint64PowOfTen(digs_to_take);
+        *buf-- = decimal_digit_t((fp % types::Uint128PowOfTen(digs_to_take)) *
+                                 types::Uint128PowOfTen(cur_pow));
+        fp /= types::Uint128PowOfTen(digs_to_take);
       }
-      int output_scale_1 = (output_scale > 18) ? 18 : output_scale;
+      int output_scale_1 = (output_scale > common::MAX_DEC_PRECISION) ? common::MAX_DEC_PRECISION : output_scale;
       my_decimal_round(0, value, (output_scale_1 == -1) ? frac : output_scale_1, false, value);
       return 1;
     } else if (rcitem.Type() == common::CT::REAL || rcitem.Type() == common::CT::FLOAT) {

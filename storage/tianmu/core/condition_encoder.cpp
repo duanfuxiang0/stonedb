@@ -218,16 +218,126 @@ void ConditionEncoder::EncodeConditionOnStringColumn() {
 }
 
 void ConditionEncoder::EncodeConditionOnNumerics() {
-  if (desc->op == common::Operator::O_IN || desc->op == common::Operator::O_NOT_IN)
+  if (desc->op == common::Operator::O_IN || desc->op == common::Operator::O_NOT_IN) {
     TransformINs();
+  } else {
+    if (ATI::IsDecimalType(AttrTypeName())) {
+      TransformOtherThanINsOnDecimals();
+    } else {
+      TransformOtherThanINsOnNumerics();
+    }
+  }
+}
+
+void ConditionEncoder::TransformOtherThanINsOnDecimals() {
+  MEASURE_FET("ConditionEncoder::TransformOtherThanINsOnDecimals(...)");
+
+  static MIIterator mit(NULL, pack_power);
+  types::RCDecimal rco1;
+  types::RCDecimal rco2;
+  types::RCDecimal rco_null(common::NULL_VALUE_128, attr->Type().GetScale(),
+  attr->Type().GetPrecision(), attr->TypeName());
+
+  types::RCDecimal rco_one(1, attr->Type().GetScale(), 
+  attr->Type().GetPrecision(), attr->TypeName());
+
+  vcolumn::MultiValColumn *mvc = 0;
+  if (desc->val1.vc && (desc->val1.vc)->IsMultival()) {
+    mvc = static_cast<vcolumn::MultiValColumn *>(desc->val1.vc);
+    PrepareValueSet(*mvc);  // else it was already done above
+    // common::Operator::O_EQ_ANY = common::Operator::O_IN processed by other function,
+    // common::Operator::O_NOT_EQ_ANY processed on higher level
+    if (desc->op == common::Operator::O_LESS_ANY || desc->op == common::Operator::O_LESS_EQ_ANY ||
+        desc->op == common::Operator::O_MORE_ALL || desc->op == common::Operator::O_MORE_EQ_ALL)
+      rco1 = *(mvc->GetSetMin(mit).Get());
+    else                                     //	ANY && MORE or ALL && LESS
+      rco1 = *(mvc->GetSetMax(mit).Get());
+  } else if (desc->val1.vc->IsConst()) {
+      rco1 = *(desc->val1.vc->GetValue(mit).Get());
+  }
+
+  if (desc->val2.vc && (desc->val2.vc)->IsMultival()) {
+    mvc = static_cast<vcolumn::MultiValColumn *>(desc->val2.vc);
+    PrepareValueSet(*mvc);
+    // only for BETWEEN
+    if (IsSetAnyOperator(desc->op))
+      rco2 = *(mvc->GetSetMax(mit).Get());
+    else
+      //	ALL
+      rco2 = *(mvc->GetSetMin(mit).Get());
+  } else {
+    if (!desc->val2.IsNull() && desc->val2.vc && desc->val2.vc->IsConst()) {
+      rco2 = *(mvc->GetValue(mit).Get());
+    } else
+      rco2 = types::RCDecimal(common::NULL_VALUE_128, 
+        attr->Type().GetScale(), 
+        attr->Type().GetPrecision(), 
+        attr->TypeName());
+  }
+
+  if (rco1 == rco_null || (desc->op == common::Operator::O_BETWEEN &&
+                                      rco2 == rco_null)) {  // any comparison with null values only
+    desc->op = common::Operator::O_FALSE;
+    return;
+  }
+
+  if (ISTypeOfEqualOperator(desc->op) || ISTypeOfNotEqualOperator(desc->op)) rco2 = rco1;
+
+  if (ISTypeOfLessOperator(desc->op)) {
+    if (rco1 > common::MINUS_INF_128) rco2 = rco1 - rco_one;
+    rco1 = types::RCDecimal(common::MINUS_INF_128, 
+      attr->Type().GetScale(), 
+      attr->Type().GetPrecision(), 
+      attr->TypeName());
+  }
+
+  if (ISTypeOfMoreOperator(desc->op)) {
+    if (rco1 != common::PLUS_INF_128) rco1 += rco_one;
+    rco2 = types::RCDecimal(common::PLUS_INF_128, 
+      attr->Type().GetScale(), 
+      attr->Type().GetPrecision(), 
+      attr->TypeName());
+  }
+
+  if (ISTypeOfLessEqualOperator(desc->op)) {
+    rco2 = rco1;
+    rco1 = types::RCDecimal(common::MINUS_INF_128, 
+      attr->Type().GetScale(), 
+      attr->Type().GetPrecision(), 
+      attr->TypeName());
+  }
+
+  if (ISTypeOfMoreEqualOperator(desc->op)) {
+    rco2 = types::RCDecimal(common::PLUS_INF_128, 
+      attr->Type().GetScale(), 
+      attr->Type().GetPrecision(), 
+      attr->TypeName());
+  }
+
+  desc->sharp = false;
+  if (ISTypeOfNotEqualOperator(desc->op) || desc->op == common::Operator::O_NOT_BETWEEN)
+    desc->op = common::Operator::O_NOT_BETWEEN;
   else
-    TransformOtherThanINsOnNumerics();
+    desc->op = common::Operator::O_BETWEEN;
+
+  desc->val1 = CQTerm();
+  desc->val1.vc = new vcolumn::ConstColumn(
+      ValueOrNull(rco1),
+      attr->Type());
+  desc->val1.vc_id = desc->table->AddVirtColumn(desc->val1.vc);
+
+  desc->val2 = CQTerm();
+  desc->val2.vc = new vcolumn::ConstColumn(
+      ValueOrNull(rco2),
+      attr->Type());
+  desc->val2.vc_id = desc->table->AddVirtColumn(desc->val2.vc);
 }
 
 void ConditionEncoder::TransformOtherThanINsOnNumerics() {
   MEASURE_FET("ConditionEncoder::TransformOtherThanINsOnNumerics(...)");
   int64_t v1 = 0;
   int64_t v2 = 0;
+  
   bool v1_rounded = false, v2_rounded = false;
   static MIIterator mit(NULL, pack_power);
 

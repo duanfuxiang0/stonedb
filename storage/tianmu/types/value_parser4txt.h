@@ -33,9 +33,6 @@ class ValueParserForText {
   static auto GetParsingFuntion(const core::AttributeTypeInfo &at)
       -> std::function<common::ErrorCode(BString const &, int64_t &)> {
     switch (at.Type()) {
-      case common::CT::NUM:
-        return std::bind<common::ErrorCode>(&ParseDecimal, std::placeholders::_1, std::placeholders::_2, at.Precision(),
-                                            at.Scale());
       case common::CT::REAL:
       case common::CT::FLOAT:
       case common::CT::BYTEINT:
@@ -59,9 +56,26 @@ class ValueParserForText {
     return NULL;
   }
 
+  static auto GetParsingFuntionDecimal(const core::AttributeTypeInfo &at)
+      -> std::function<common::ErrorCode(BString const &, common::tianmu_int128_t&)> {
+    switch (at.Type()) {
+      case common::CT::NUM:
+        return std::bind<common::ErrorCode>(&ParseDecimalForInt128, std::placeholders::_1, std::placeholders::_2, 
+                                            at.Precision(), at.Scale());
+      default:
+        TIANMU_ERROR("type not supported:" + std::to_string(static_cast<unsigned char>(at.Type())));
+        break;
+    }
+    return NULL;
+  }
+
   static common::ErrorCode ParseNumeric(BString const &rcs, int64_t &out, common::CT at);
   static common::ErrorCode ParseBigIntAdapter(const BString &rcs, int64_t &out);
-  static common::ErrorCode ParseDecimal(BString const &rcs, int64_t &out, short precision, short scale);
+
+  static common::ErrorCode ParseDecimalForInt128(BString const &rcs, common::tianmu_int128_t &out, uint precision, short scale);
+  static common::ErrorCode ParseDecimal(BString const &rcs, RCDecimal& rcdc, uint precision, short scale);
+  static common::ErrorCode ParseRealDecimal(const BString &rcbs, RCDecimal &rcdc, common::CT at);
+
   static common::ErrorCode ParseDateTimeAdapter(BString const &rcs, int64_t &out, common::CT at);
 
   static common::ErrorCode Parse(const BString &rcs, RCNum &rcn, common::CT at);

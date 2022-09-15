@@ -28,7 +28,7 @@
 namespace Tianmu {
 namespace core {
 // make sure the struct is not modified by mistake
-static_assert(sizeof(DPN) == 80, "Bad struct size of DPN");
+static_assert(sizeof(DPN) == 104, "Bad struct size of DPN");
 
 ColumnShare::~ColumnShare() {
   if (start != nullptr) {
@@ -93,10 +93,8 @@ void ColumnShare::read_meta() {
   ct.SetScale(meta.scale);
 
   auto type = ct.GetTypeName();
-  if (ct.IsLookup() || ATI::IsNumericType(type) || ATI::IsDateTimeType(type))
-    pt = common::PackType::INT;
-  else
-    pt = common::PackType::STR;
+  // decimal : modify the decimal storage type to packstr
+  pt = GetPackType(ct, type);
 
   if (pt == common::PackType::INT) {
     has_filter_hist = true;
@@ -172,14 +170,36 @@ void ColumnShare::init_dpn(DPN &dpn, const common::TX_ID xid, const DPN *from) {
     if (pt == common::PackType::INT) {
       dpn.min_i = common::PLUS_INF_64;
       dpn.max_i = common::MINUS_INF_64;
-    } else {
+    } else if (pt == common::PackType::STR) {
       dpn.min_i = 0;
       dpn.max_i = -1;
+    } else if (pt == common::PackType::DEC) {
+      DEBUG_ASSERT(common::PLUS_INF_128 > 0);
+      DEBUG_ASSERT(common::MINUS_INF_128 < 0);
+      PackDec::WriteInt128ToVec(common::PLUS_INF_128, dpn.min_s);
+      PackDec::WriteInt128ToVec(common::MINUS_INF_128, dpn.max_s);
     }
   }
   dpn.used = 1;
   dpn.local = 1;   // a new allocated dpn is __always__ owned by write session
   dpn.synced = 1;  // would be reset by Pack when there is update
+
+  switch (pt)
+  {
+    case common::PackType::INT:
+      dpn.tp = static_cast<uint8_t>(DPN_Type::INT);
+      break;
+    case common::PackType::DEC:
+      dpn.tp = static_cast<uint8_t>(DPN_Type::DEC);
+      break;
+    case common::PackType::STR:
+      dpn.tp = static_cast<uint8_t>(DPN_Type::STR);
+      break;
+    default:
+      dpn.tp = static_cast<uint8_t>(DPN_Type::UNK);
+      break;
+  }
+
   if (from != nullptr)
     dpn.base = GetPackIndex(const_cast<DPN *>(from));
   else
@@ -192,7 +212,7 @@ void ColumnShare::init_dpn(DPN &dpn, const common::TX_ID xid, const DPN *from) {
 // should get page size at run time with sysconf(_SC_PAGE_SIZE) but for
 // efficiency...
 static constexpr size_t PAGE_SIZE = 4096;
-static constexpr size_t PAGE_CNT = 5;
+static constexpr size_t PAGE_CNT = 13;
 static constexpr size_t ALLOC_UNIT = PAGE_CNT * PAGE_SIZE;
 
 static_assert(ALLOC_UNIT % sizeof(DPN) == 0);

@@ -34,6 +34,7 @@ class ValueOrNull final {
   ValueOrNull(types::RCNum const &rcn);
   ValueOrNull(types::RCDateTime const &rcdt);
   ValueOrNull(types::BString const &rcs);
+  ValueOrNull(types::RCDecimal const &rcdc);
   ValueOrNull(ValueOrNull const &von);
 
   ~ValueOrNull() { Clear(); }
@@ -56,6 +57,10 @@ class ValueOrNull final {
   bool NotNull() const { return !null; }
   size_t StrLen() const { return len; }
   int64_t Get64() const { return x; }
+  common::tianmu_int128_t Get128() const { 
+    std::string dec(sp, len);
+    return common::tianmu_int128_t(dec);
+  } 
 
   void SetFixed(int64_t v) {
     Clear();
@@ -84,6 +89,9 @@ class ValueOrNull final {
   //! create a local copy of the string pointed by sp
   void MakeStringOwner();
 
+  //! assign a string to decimal
+  void SetRCDecimal(const types::BString &rcs, short prec, short scale);
+
   /*! Get a string in the form of RSBString
    * \param rcs is given the string value from this
    * Warning 1: the string pointed to by 'rcs' should be copied as soon as
@@ -92,6 +100,8 @@ class ValueOrNull final {
    * leaks may occur
    */
   void GetBString(types::BString &rcs) const;
+  void GetRCDecimal(types::RCDecimal &rcdc) const;
+
   std::optional<std::string> ToString() const;
 
  private:
@@ -110,6 +120,21 @@ class ValueOrNull final {
     x = common::NULL_VALUE_64;
     len = 0;
   }
+
+  void SetDecimalPS(short prec, short scale) {
+    x = 0;
+    x |= prec;
+    x <<= 16;
+    x |= scale;
+  }
+
+  void GetDecimalPS(short& prec, short& scale) const {
+    int64_t m = x;
+    scale = m & 0xFFFF;
+    m >>= 16;
+    prec = m & 0xFFFF;
+  }
+
 };
 }  // namespace core
 }  // namespace Tianmu

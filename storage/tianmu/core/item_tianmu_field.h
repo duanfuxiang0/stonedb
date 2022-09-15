@@ -131,6 +131,7 @@ class Item_tianmudecimal : public Item_decimal {
   Item_tianmudecimal(DataType t);
 
   void Set(int64_t val);
+  void Set(types::BString val);
 
  private:
   int scale;

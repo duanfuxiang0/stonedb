@@ -21,6 +21,7 @@
 #include "core/transaction.h"
 #include "my_time.h"
 #include "system/rc_system.h"
+#include "common/common_definitions.h"
 
 namespace Tianmu {
 namespace types {
@@ -85,19 +86,20 @@ static inline common::ErrorCode EatInt64(char *&ptr, int &len, int64_t &out_valu
   return rc;
 }
 
-common::ErrorCode ValueParserForText::ParseNum(const BString &rcs, RCNum &rcn, short scale) {
+common::ErrorCode ValueParserForText::ParseDecimal(const BString &rcs, RCDecimal &rcdc, 
+                                        uint precision, short scale) {
   // TODO: refactor
   char *val, *val_ptr;
   val = val_ptr = rcs.val;
   int len = rcs.len;
   EatWhiteSigns(val, len);
   if (rcs.Equals("NULL", 4)) {
-    rcn.null = true;
+    rcdc.null = true;
     return common::ErrorCode::SUCCESS;
   }
-  rcn.null = false;
-  rcn.is_double_ = false;
-  rcn.scale_ = 0;
+  rcdc.null = false;
+  rcdc.precision_ = 0;
+  rcdc.scale_ = 0;
 
   int ptr_len = len;
   val_ptr = val;
@@ -107,7 +109,8 @@ common::ErrorCode ValueParserForText::ParseNum(const BString &rcs, RCNum &rcn, s
   val_ptr = val;
   bool has_dot = false;
   bool has_unexpected_sign = false;
-  int64_t v = 0;
+
+  common::tianmu_int128_t v = 0;
   short sign = 1;
   bool last_set = false;
   short last = 0;
@@ -117,12 +120,13 @@ common::ErrorCode ValueParserForText::ParseNum(const BString &rcs, RCNum &rcn, s
     ptr_len--;
     sign = -1;
   }
+
   while (ptr_len > 0) {
     if (isdigit((uchar)*val_ptr)) {
       no_digs++;
       if (has_dot) no_digs_after_dot++;
 
-      if ((no_digs <= 18 && scale < 0) || (no_digs <= 18 && no_digs_after_dot <= scale && scale >= 0)) {
+      if ((no_digs <= precision && scale < 0) || (no_digs <= precision && no_digs_after_dot <= scale && scale >= 0)) {
         v *= 10;
         v += *val_ptr - '0';
         last = *val_ptr - '0';
@@ -139,8 +143,9 @@ common::ErrorCode ValueParserForText::ParseNum(const BString &rcs, RCNum &rcn, s
             }
           }
         } else {
-          rcn.value_ = (Uint64PowOfTen(18) - 1) * sign;
-          rcn.scale_ = 0;
+          rcdc.value_ = (Uint128PowOfTen(common::MAX_DEC_PRECISION) - 1) * sign;
+          rcdc.precision_ = common::MAX_DEC_PRECISION;
+          rcdc.scale_ = 0;
           return common::ErrorCode::OUT_OF_RANGE;
         }
       }
@@ -152,8 +157,8 @@ common::ErrorCode ValueParserForText::ParseNum(const BString &rcs, RCNum &rcn, s
       if (ptr_len > 0) has_unexpected_sign = true;
       break;
     } else if (*val_ptr == 'd' || *val_ptr == 'D' || *val_ptr == 'e' || *val_ptr == 'E') {
-      tianmuret = RCNum::ParseReal(rcs, rcn, common::CT::REAL);
-      rcn = rcn.ToDecimal(scale);
+      tianmuret = RCDecimal::ParseReal(rcs, rcdc, common::CT::REAL);
+      rcdc = rcdc.ToDecimal(scale);
       return tianmuret;
     } else {
       has_unexpected_sign = true;
@@ -177,12 +182,13 @@ common::ErrorCode ValueParserForText::ParseNum(const BString &rcs, RCNum &rcn, s
     scale = no_digs_after_dot;
   }
 
-  if (no_digs > 18)
-    rcn.value_ = (Uint64PowOfTen(18) - 1) * sign;
+  if (no_digs > precision)
+    rcdc.value_ = (Uint128PowOfTen(common::MAX_DEC_PRECISION) - 1) * sign;
   else
-    rcn.value_ = v * sign;
-  rcn.scale_ = scale;
-  if (has_unexpected_sign || no_digs > 18) return common::ErrorCode::VALUE_TRUNCATED;
+    rcdc.value_ = v * sign;
+  rcdc.scale_ = scale;
+  rcdc.precision_ = precision;
+  if (has_unexpected_sign || no_digs > common::MAX_DEC_PRECISION) return common::ErrorCode::VALUE_TRUNCATED;
   return tianmuret;
 }
 
@@ -344,6 +350,217 @@ common::ErrorCode ValueParserForText::Parse(const BString &rcs, RCNum &rcn, comm
     rcn.is_double_ = false;
     rcn.scale_ = 0;
     rcn.value_ = v;
+  }
+  return ret;
+}
+
+common::ErrorCode ValueParserForText::ParseNum(const BString &rcs, RCNum &rcn, short scale) {
+  // TODO: refactor
+  char *val, *val_ptr;
+  val = val_ptr = rcs.val;
+  int len = rcs.len;
+  EatWhiteSigns(val, len);
+  if (rcs.Equals("NULL", 4)) {
+    rcn.null = true;
+    return common::ErrorCode::SUCCESS;
+  }
+  rcn.null = false;
+  rcn.is_double_ = false;
+  rcn.scale_ = 0;
+
+  int ptr_len = len;
+  val_ptr = val;
+  ushort no_digs = 0;
+  ushort no_digs_after_dot = 0;
+  ptr_len = len;
+  val_ptr = val;
+  bool has_dot = false;
+  bool has_unexpected_sign = false;
+  int64_t v = 0;
+  short sign = 1;
+  bool last_set = false;
+  short last = 0;
+  common::ErrorCode tianmuret = common::ErrorCode::SUCCESS;
+  if (ptr_len > 0 && *val_ptr == '-') {
+    val_ptr++;
+    ptr_len--;
+    sign = -1;
+  }
+  while (ptr_len > 0) {
+    if (isdigit((uchar)*val_ptr)) {
+      no_digs++;
+      if (has_dot) no_digs_after_dot++;
+
+      if ((no_digs <= 18 && scale < 0) || (no_digs <= 18 && no_digs_after_dot <= scale && scale >= 0)) {
+        v *= 10;
+        v += *val_ptr - '0';
+        last = *val_ptr - '0';
+      } else {
+        no_digs--;
+        if (has_dot) {
+          no_digs_after_dot--;
+          if (*val_ptr != '0') tianmuret = common::ErrorCode::VALUE_TRUNCATED;
+          if (!last_set) {
+            last_set = true;
+            if (*val_ptr > '4') {
+              last += 1;
+              v = (v / 10) * 10 + last;
+            }
+          }
+        } else {
+          rcn.value_ = (Uint64PowOfTen(18) - 1) * sign;
+          rcn.scale_ = 0;
+          return common::ErrorCode::OUT_OF_RANGE;
+        }
+      }
+    } else if (*val_ptr == '.' && !has_dot) {
+      has_dot = true;
+      if (v == 0) no_digs = 0;
+    } else if (isspace((uchar)*val_ptr)) {
+      EatWhiteSigns(val_ptr, ptr_len);
+      if (ptr_len > 0) has_unexpected_sign = true;
+      break;
+    } else if (*val_ptr == 'd' || *val_ptr == 'D' || *val_ptr == 'e' || *val_ptr == 'E') {
+      tianmuret = RCNum::ParseReal(rcs, rcn, common::CT::REAL);
+      rcn = rcn.ToDecimal(scale);
+      return tianmuret;
+    } else {
+      has_unexpected_sign = true;
+      break;
+    }
+    ptr_len--;
+    val_ptr++;
+  }
+  if (scale != -1) {
+    while (scale > no_digs_after_dot) {
+      v *= 10;
+      no_digs_after_dot++;
+      no_digs++;
+    }
+    while (scale < no_digs_after_dot) {
+      v /= 10;
+      no_digs_after_dot--;
+      no_digs--;
+    }
+  } else {
+    scale = no_digs_after_dot;
+  }
+
+  if (no_digs > 18)
+    rcn.value_ = (Uint64PowOfTen(18) - 1) * sign;
+  else
+    rcn.value_ = v * sign;
+  rcn.scale_ = scale;
+  if (has_unexpected_sign || no_digs > 18) return common::ErrorCode::VALUE_TRUNCATED;
+  return tianmuret;
+}
+
+common::ErrorCode ValueParserForText::ParseRealDecimal(const BString &rcbs, RCDecimal &rcdc, common::CT at) {
+  // TODO: refactor
+  if (at == common::CT::UNK) at = common::CT::REAL;
+  if (!core::ATI::IsDecimalType(at)) return common::ErrorCode::FAILED;
+
+  if (rcbs.Equals("NULL", 4) || rcbs.IsNull()) {
+    rcdc.null = true;
+    return common::ErrorCode::SUCCESS;
+  }
+  rcdc.scale_ = 0;
+
+  char *val = rcbs.val;
+  int len = rcbs.len;
+  EatWhiteSigns(val, len);
+
+  char *val_ptr = val;
+  int ptr_len = len;
+
+  bool has_dot = false;
+  bool has_exp = false;
+  bool can_be_minus = true;
+
+  common::ErrorCode ret = common::ErrorCode::SUCCESS;
+
+  while (ptr_len > 0) {
+    if (can_be_minus && *val_ptr == '-') {
+      can_be_minus = false;
+    } else if (*val_ptr == '.' && !has_dot && !has_exp) {
+      has_dot = true;
+      can_be_minus = false;
+    } else if (!has_exp && (*val_ptr == 'd' || *val_ptr == 'D' || *val_ptr == 'e' || *val_ptr == 'E')) {
+      val_ptr++;
+      ptr_len--;
+      can_be_minus = true;
+      has_exp = true;
+      int exponent = 0;
+      if (system::EatInt(val_ptr, ptr_len, exponent) != common::ErrorCode::SUCCESS) {
+        ret = common::ErrorCode::VALUE_TRUNCATED;
+        break;
+      }
+    } else if (isspace((uchar)*val_ptr)) {
+      EatWhiteSigns(val_ptr, ptr_len);
+      if (ptr_len > 0) ret = common::ErrorCode::VALUE_TRUNCATED;
+      break;
+    } else if (!isdigit((uchar)*val_ptr)) {
+      ret = common::ErrorCode::VALUE_TRUNCATED;
+      break;
+    }
+    val_ptr++;
+    ptr_len--;
+  }
+  char stempval[PARS_BUF_SIZE];
+  if (rcbs.len >= PARS_BUF_SIZE) return common::ErrorCode::VALUE_TRUNCATED;
+#ifndef NDEBUG
+  // resetting stempval to avoid valgrind
+  // false warnings
+  std::memset(stempval, 0, PARS_BUF_SIZE);
+#endif
+  std::memcpy(stempval, rcbs.val, rcbs.len);
+  stempval[rcbs.len] = 0;
+  double d = 0.0;
+  try {
+    d = std::stod(std::string(stempval));
+  } catch (...) {
+    d = std::atof(stempval);
+  }
+
+  if (fabs(d) == 0.0)
+    d = 0.0;  // convert -0.0 to 0.0
+  else if ((std::isnan)(d)) {
+    d = 0.0;
+    ret = common::ErrorCode::OUT_OF_RANGE;
+  }
+
+  rcdc.attr_type_ = at;
+  rcdc.null = false;
+  if (at == common::CT::REAL) {
+    if (d > DBL_MAX) {
+      d = DBL_MAX;
+      ret = common::ErrorCode::OUT_OF_RANGE;
+    } else if (d < -DBL_MAX) {
+      d = -DBL_MAX;
+      ret = common::ErrorCode::OUT_OF_RANGE;
+    } else if (d > 0 && d < DBL_MIN) {
+      d = /*DBL_MIN*/ 0;
+      ret = common::ErrorCode::OUT_OF_RANGE;
+    } else if (d < 0 && d > -DBL_MIN) {
+      d = /*DBL_MIN*/ 0 * -1;
+      ret = common::ErrorCode::OUT_OF_RANGE;
+    }
+    *(double *)&rcdc.value_ = d;
+  } else if (at == common::CT::FLOAT) {
+    if (d > FLT_MAX) {
+      d = FLT_MAX;
+      ret = common::ErrorCode::OUT_OF_RANGE;
+    } else if (d < -FLT_MAX) {
+      d = -FLT_MAX;
+      ret = common::ErrorCode::OUT_OF_RANGE;
+    } else if (d > 0 && d < FLT_MIN) {
+      d = 0;
+      ret = common::ErrorCode::OUT_OF_RANGE;
+    } else if (d < 0 && d > FLT_MIN * -1) {
+      d = 0 * -1;
+      ret = common::ErrorCode::OUT_OF_RANGE;
+    }
+    *(double *)&rcdc.value_ = d;
   }
   return ret;
 }
@@ -579,15 +796,15 @@ common::ErrorCode ValueParserForText::ParseBigIntAdapter(const BString &rcs, int
   return return_code;
 }
 
-common::ErrorCode ValueParserForText::ParseDecimal(BString const &rcs, int64_t &out, short precision, short scale) {
-  RCNum number;
-  common::ErrorCode return_code = ParseNum(rcs, number, scale);
+common::ErrorCode ValueParserForText::ParseDecimalForInt128(BString const &rcs, common::tianmu_int128_t &out, uint precision, short scale) {
+  RCDecimal number;
+  common::ErrorCode return_code = ParseDecimal(rcs, number, precision, scale);
   out = number.ValueInt();
-  if (out > 0 && out >= (int64_t)Uint64PowOfTen(precision)) {
-    out = Uint64PowOfTen(precision) - 1;
+  if (out > 0 && out >= Uint128PowOfTen(precision)) {
+    out = Uint128PowOfTen(precision) - 1;
     return_code = common::ErrorCode::OUT_OF_RANGE;
-  } else if (out < 0 && out <= (int64_t)Uint64PowOfTen(precision) * -1) {
-    out = Uint64PowOfTen(precision) * -1 + 1;
+  } else if (out < 0 && out <= (int64_t)Uint128PowOfTen(precision) * -1) {
+    out = Uint128PowOfTen(precision) * -1 + 1;
     return_code = common::ErrorCode::OUT_OF_RANGE;
   }
   return return_code;

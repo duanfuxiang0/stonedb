@@ -119,8 +119,12 @@ void Item_tianmufield::FeedValue() {
     case DataType::ValueType::VT_FIXED:
       if (tianmu_type.IsInt())
         ((Item_int *)ivalue)->value = buf->Get64();
-      else
-        ((Item_tianmudecimal *)ivalue)->Set(buf->Get64());
+      else {
+        //((Item_tianmudecimal *)ivalue)->Set(buf->Get64());
+        types::BString bstr;
+        buf->GetBString(bstr);
+        ((Item_tianmudecimal *)ivalue)->Set(bstr);
+      }
       break;
 
     case DataType::ValueType::VT_FLOAT:
@@ -208,6 +212,18 @@ void Item_tianmudecimal::Set(int64_t val) {
   std::fill(decimal_value.buf, decimal_value.buf + decimal_value.len, 0);
   if (val) {
     int2my_decimal((uint)-1, val, 0, &decimal_value);
+    my_decimal_shift((uint)-1, &decimal_value, -scale);
+  } else {
+    my_decimal_set_zero(&decimal_value);
+  }
+  decimal_value.frac = scale;
+}
+
+void Item_tianmudecimal::Set(types::BString val) {
+  std::fill(decimal_value.buf, decimal_value.buf + decimal_value.len, 0);
+  if (val.size()) {
+    char* end = val.end();
+    string2decimal(val.begin(), &decimal_value, &end);
     my_decimal_shift((uint)-1, &decimal_value, -scale);
   } else {
     my_decimal_set_zero(&decimal_value);

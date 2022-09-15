@@ -211,6 +211,68 @@ common::RSValue RCAttr::RoughCheck(int pack, Descriptor &d, bool additional_null
       if (res == common::RSValue::RS_ALL && (dpn.nn > 0 || additional_nulls_possible)) res = common::RSValue::RS_SOME;
       return res;
     } else if ((d.op == common::Operator::O_IN || d.op == common::Operator::O_NOT_IN) &&
+               (GetPackType() == common::PackType::DEC)) {
+      DEBUG_ASSERT(Type().GetTypeName() == common::CT::NUM);
+      if (vc1->IsConst()) {
+        DEBUG_ASSERT(dynamic_cast<vcolumn::MultiValColumn *>(vc1));
+        vcolumn::MultiValColumn *mvc(static_cast<vcolumn::MultiValColumn *>(vc1));
+        types::RCDecimal rcdc_min, rcdc_max;
+        rcdc_min = mvc->GetSetMin(mit);
+        rcdc_max = mvc->GetSetMax(mit);
+        if (rcdc_min.IsNull() || rcdc_max.IsNull())  // cannot determine min/max
+          return common::RSValue::RS_SOME;
+
+        common::RSValue res = common::RSValue::RS_SOME;
+
+        types::RCDecimal pack_rcdc_max(PackDec::ConvertVecToInt128(dpn.max_s), 
+              Type().GetScale(), Type().GetPrecision(), common::CT::NUM);
+        types::RCDecimal pack_rcdc_min(PackDec::ConvertVecToInt128(dpn.min_s), 
+              Type().GetScale(), Type().GetPrecision(), common::CT::NUM);
+
+        if (rcdc_min > pack_rcdc_max || rcdc_max < pack_rcdc_min) {
+          res = common::RSValue::RS_NONE;  // calculate as for common::Operator::O_IN and then take
+                                           // common::Operator::O_NOT_IN into account
+        } else if (pack_rcdc_min == pack_rcdc_max) {
+          res = (mvc->Contains(mit, pack_rcdc_min) != false) ? common::RSValue::RS_ALL : common::RSValue::RS_NONE;
+        } else {
+          // TODO : Decimal Hist Filter
+          // if (auto sp = GetFilter_Hist()) res = sp->IsValue(v1, v2, pack, dpn.min_i, dpn.max_i);
+          if (res == common::RSValue::RS_ALL)  // v1, v2 are just a boundary, not
+                                               // continuous interval
+            res = common::RSValue::RS_SOME;
+        }
+        if (res == common::RSValue::RS_SOME && (mvc->NumOfValues(mit) > 0 && mvc->NumOfValues(mit) < 64)) {
+          bool v_rounded = false;
+          res = common::RSValue::RS_NONE;
+          int64_t v;  // TODO: get rid with the iterator below
+          for (vcolumn::MultiValColumn::Iterator it = mvc->begin(mit), end = mvc->end(mit);
+               (it != end) && (res == common::RSValue::RS_NONE); ++it) {
+            if (!Type().IsLookup()) {  // otherwise it will be decoded to text
+              v = EncodeValue64(it->GetValue().Get(), v_rounded);
+            } else
+              v = it->GetInt64();
+            if (!v_rounded) {
+              auto sp = GetFilter_Hist();
+              if ((!sp && v <= dpn.max_i && v >= dpn.min_i) ||
+                  (sp && sp->IsValue(v, v, pack, dpn.min_i, dpn.max_i) != common::RSValue::RS_NONE)) {
+                // suspected, if any value is possible
+                res = common::RSValue::RS_SOME;  // note: v_rounded means that this real
+                                                 // value could not match this pack
+                break;
+              }
+            }
+          }
+        }
+        if (d.op == common::Operator::O_NOT_IN) {
+          if (res == common::RSValue::RS_ALL)
+            res = common::RSValue::RS_NONE;
+          else if (res == common::RSValue::RS_NONE)
+            res = common::RSValue::RS_ALL;
+        }
+        if (res == common::RSValue::RS_ALL && (dpn.nn > 0 || additional_nulls_possible)) res = common::RSValue::RS_SOME;
+        return res;
+      }
+    } else if ((d.op == common::Operator::O_IN || d.op == common::Operator::O_NOT_IN) &&
                (GetPackType() == common::PackType::INT)) {
       if (vc1->IsConst()) {
         DEBUG_ASSERT(dynamic_cast<vcolumn::MultiValColumn *>(vc1));

@@ -490,20 +490,25 @@ std::shared_ptr<ValueOrNull> MysqlExpression::ItemDecimal2ValueOrNull(Item *item
   auto val = std::make_shared<ValueOrNull>();
   my_decimal dec;
   my_decimal *retdec = item->val_decimal(&dec);
+  uint prec = retdec->precision();
+  int frac = retdec->frac;
   if (retdec != NULL) {
     if (retdec != &dec) my_decimal2decimal(retdec, &dec);
-    int64_t v;
     int err;
     // err = my_decimal_shift((uint)-1, &dec, item->decimals <= 18 ?
     // item->decimals : 18);
     if (dec_scale == -1)
-      err = my_decimal_shift((uint)-1, &dec, item->decimals <= 18 ? item->decimals : 18);
+      err = my_decimal_shift((uint)-1, &dec, item->decimals <= common::MAX_DEC_PRECISION 
+        ? item->decimals : common::MAX_DEC_PRECISION);
     else
-      err = my_decimal_shift((uint)-1, &dec, dec_scale <= 18 ? dec_scale : 18);
+      err = my_decimal_shift((uint)-1, &dec, dec_scale <= common::MAX_DEC_PRECISION 
+        ? dec_scale : common::MAX_DEC_PRECISION);
     CheckDecimalError(err);
-    err = my_decimal2int((uint)-1, &dec, false, (longlong *)&v);
+    String str;
+    err = my_decimal2string(E_DEC_FATAL_ERROR, &dec, 0, 0, 0, &str);
     CheckDecimalError(err);
-    val->SetFixed(v);
+    types::BString bstr(str.c_ptr(), str.length(), true);
+    val->SetRCDecimal(bstr, prec, frac);
   }
   if (item->null_value) return std::make_shared<ValueOrNull>();
   return val;

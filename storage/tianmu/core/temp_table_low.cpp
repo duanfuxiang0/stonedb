@@ -448,7 +448,7 @@ void TempTable::SendResult(int64_t limit, int64_t offset, ResultSender &sender, 
 
       auto vc = col->term.vc;
       if (ct == common::CT::INT || ct == common::CT::MEDIUMINT || ct == common::CT::SMALLINT ||
-          ct == common::CT::BYTEINT || ct == common::CT::NUM || ct == common::CT::BIGINT) {
+          ct == common::CT::BYTEINT || ct == common::CT::BIGINT) {
         auto data_ptr = new types::RCNum();
         if (vc->IsNull(it))
           data_ptr->SetToNull();
@@ -468,6 +468,16 @@ void TempTable::SendResult(int64_t limit, int64_t offset, ResultSender &sender, 
           data_ptr->SetToNull();
         else
           data_ptr->Assign(vc->GetValueInt64(it), ct);
+        record.emplace_back(data_ptr);
+      } else if (ATI::IsDecimalType(ct)) {
+        auto data_ptr = new types::RCDecimal();
+        if (vc->IsNull(it))
+          data_ptr->SetToNull();
+        else {
+          types::BString str;
+          vc->GetNotNullValueString(str, it);
+          data_ptr->Assign(str, col->Type().GetScale(), col->Type().GetPrecision(), common::CT::NUM);
+        }
         record.emplace_back(data_ptr);
       } else {
         ASSERT(ATI::IsStringType(ct), "not all possible attr_types checked");
