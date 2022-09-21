@@ -604,9 +604,13 @@ void RCTable::Field2VC(Field *f, loader::ValueCache &vc, size_t col) {
     } break;
     case MYSQL_TYPE_NEWDECIMAL: {
       auto dec_f = dynamic_cast<Field_new_decimal *>(f);
-      *reinterpret_cast<int64_t *>(vc.Prepare(sizeof(int64_t))) =
-          std::lround(dec_f->val_real() * types::PowOfTen(dec_f->dec));
-      vc.ExpectedSize(sizeof(int64_t));
+      char buff[common::MAX_DEC_PRECISION];
+      my_decimal md;
+      dec_f->val_decimal(&md);
+      String md_str(buff, common::MAX_DEC_PRECISION, dec_f->charset());
+      my_decimal2string(E_DEC_FATAL_ERROR, &md, 0, 0, 0, &md_str);
+      std::memcpy(vc.Prepare(md_str.length()), md_str.c_ptr(), md_str.length());
+      vc.ExpectedSize(md_str.length());
     } break;
     case MYSQL_TYPE_TIMESTAMP: {
       MYSQL_TIME my_time;
@@ -1146,6 +1150,7 @@ class DelayedInsertParser final {
         }
         auto &attr(attrs[i]);
         switch (attr->GetPackType()) {
+          case common::PackType::DEC:
           case common::PackType::STR: {
             uint32_t len = *(uint32_t *)ptr;
             ptr += sizeof(uint32_t);

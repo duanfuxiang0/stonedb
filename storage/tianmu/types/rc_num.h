@@ -93,13 +93,13 @@ class RCNum : public ValueBasic<RCNum> {
 
   uint GetHashCode() const override;
   void Negate();
-
+  
+  static constexpr int MAX_DEC_PRECISION = 18;
  private:
   int compare(const RCNum &rcn) const;
   int compare(const RCDateTime &rcn) const;
 
  private:
-  static constexpr int MAX_DEC_PRECISION = 18;
   int64_t value_;
   ushort scale_;  // means 'scale' actually
   bool is_double_;

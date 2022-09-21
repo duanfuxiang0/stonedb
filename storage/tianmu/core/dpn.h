@@ -31,6 +31,8 @@ constexpr uint64_t tag_mask = 0x0000FFFFFFFFFFFF;
 constexpr uint64_t loading_flag = -1;
 constexpr uint64_t max_ref_counter = 1UL << 63;
 
+enum class DPN_Type : uint8_t { INT = 0, STR, DEC, UNK };
+
 // Data Pack Node. Same layout on disk and in memory
 struct DPN final {
  public:
@@ -42,8 +44,8 @@ struct DPN final {
   uint8_t delete_compressed : 1;
   uint8_t data_compressed : 1;
   uint8_t no_compress : 1;
-  uint8_t padding[1];  // Memory aligned padding has no practical effect
-
+  uint8_t tp;              // pack type
+  uint8_t padding[6];
   uint32_t base;           // index of the DPN from which we copied, used by local pack
   uint32_t numOfRecords;   // number of records
   uint32_t numOfNulls;     // number of nulls
@@ -57,17 +59,18 @@ struct DPN final {
   union {
     int64_t min_i;
     double min_d;
-    char min_s[8];
+    char min_s[16];
   };
   union {
     int64_t max_i;
     double max_d;
-    char max_s[8];
+    char max_s[16];
   };
   union {
     int64_t sum_i;
     double sum_d;
     uint64_t maxlen;
+    char sum_s[16];
   };
 
  private:
@@ -87,10 +90,12 @@ struct DPN final {
   */
   bool Trivial() const { return (Uniform() || NullOnly()) && numOfDeleted == 0; }
   bool NotTrivial() const { return !Trivial(); }
-  bool Uniform() const { return numOfNulls == 0 && min_i == max_i; }  // for packN, all records are the same and not null
+  bool Uniform() const { return IsInt() && numOfNulls == 0 && min_i == max_i; }  // for packN, all records are the same and not null
   bool NullOnly() const { return numOfRecords == numOfNulls; }
   bool IsLocal() const { return local == 1; }
   void SetLocal(bool v) { local = v; }
+
+  bool IsInt() const { return static_cast<uint8_t>(DPN_Type::INT) == tp; }
 
   bool IncRef() {
     auto v = tagged_ptr.load();

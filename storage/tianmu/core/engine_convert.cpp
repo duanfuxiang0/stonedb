@@ -78,6 +78,13 @@ bool Engine::ConvertToField(Field *field, types::RCDataType &rcitem, std::vector
       my_decimal md;
       if (rcitem.Type() == common::CT::REAL) {
         double2decimal((double)((types::RCNum &)(rcitem)), &md);
+      } else if (rcitem.Type() == common::CT::NUM) {
+//        types::BString real = ((types::RCDecimal&)(rcitem)).ToReal();
+//        char* end = real.end();
+//        string2decimal(real.begin(), &md, &end);
+        types::BString md_str = (types::BString&)(rcitem);
+        char* end = md_str.end();
+        string2decimal(md_str.begin(), &md, &end);
       } else {
         int is_null;
         Engine::Convert(is_null, &md, rcitem);
@@ -274,6 +281,78 @@ bool Engine::ConvertToField(Field *field, types::RCDataType &rcitem, std::vector
 #define ROUND_UP(X) (((X) + DIG_PER_DEC1 - 1) / DIG_PER_DEC1)
 
 int Engine::Convert(int &is_null, my_decimal *value, types::RCDataType &rcitem, int output_scale) {
+  // todo(dfx):
+//  if (rcitem.IsNull())
+//    is_null = 1;
+//  else {
+//    if (!Engine::AreConvertible(rcitem, MYSQL_TYPE_NEWDECIMAL)) return false;
+//    is_null = 0;
+//    if (rcitem.Type() == common::CT::NUM) {
+//      types::RCDecimal *rcdc = (types::RCDecimal *)(&rcitem);
+//      int intg = rcdc->GetDecIntLen();
+//      int frac = rcdc->GetDecFractLen();
+//      int intg1 = ROUND_UP(intg);
+//      int frac1 = ROUND_UP(frac);
+//      value->intg = intg;
+//      value->frac = frac;
+//      common::tianmu_int128_t ip = rcdc->GetIntPart();
+//      common::tianmu_int128_t fp = (rcdc->ValueInt() % types::Uint128PowOfTen(rcdc->Scale()));
+//      bool special_value_minbigint = false;
+//      if (ip == common::MINUS_INF_128) {
+//        // a special case, cannot be converted like that
+//        special_value_minbigint = true;
+//        ip += 1;  // just for now...
+//      }
+//      if (ip < 0) {
+//        ip *= -1;
+//        value->sign(true);
+//        if (fp < 0) fp *= -1;
+//      } else if (ip == 0 && fp < 0) {
+//        fp *= -1;
+//        value->sign(true);
+//      } else
+//        value->sign(false);
+//
+//      decimal_digit_t *buf = value->buf + intg1;
+//      for (int i = intg1; i > 0; i--) {
+//        *--buf = decimal_digit_t(ip % DIG_BASE);
+//        if (special_value_minbigint && i == intg1) {
+//          *buf += 1;  // revert the special case (plus, because now it is
+//          // unsigned part)
+//        }
+//        ip /= DIG_BASE;
+//      }
+//      buf = value->buf + intg1 + (frac1 - 1);
+//      int64_t tmp(fp);
+//      int no_digs = 0;
+//      while (tmp > 0) {
+//        tmp /= 10;
+//        no_digs++;
+//      }
+//      int tmp_prec = rcdc->Scale();
+//
+//      for (; frac1; frac1--) {
+//        int digs_to_take = tmp_prec - (frac1 - 1) * DIG_PER_DEC1;
+//        if (digs_to_take < 0) digs_to_take = 0;
+//        tmp_prec -= digs_to_take;
+//        int cur_pow = DIG_PER_DEC1 - digs_to_take;
+//        *buf-- = decimal_digit_t((fp % types::Uint128PowOfTen(digs_to_take)) *
+//            types::Uint128PowOfTen(cur_pow));
+//        fp /= types::Uint128PowOfTen(digs_to_take);
+//      }
+//      int output_scale_1 = (output_scale > common::MAX_DEC_PRECISION) ? common::MAX_DEC_PRECISION : output_scale;
+//      my_decimal_round(0, value, (output_scale_1 == -1) ? frac : output_scale_1, false, value);
+//      return 1;
+//    } else if (rcitem.Type() == common::CT::REAL || rcitem.Type() == common::CT::FLOAT) {
+//      double2decimal((double)((types::RCNum &)(rcitem)), (decimal_t *)value);
+//      return 1;
+//    } else if (ATI::IsIntegerType(rcitem.Type())) {
+//      longlong2decimal((longlong)((types::RCNum &)(rcitem)).ValueInt(), (decimal_t *)value);
+//      return 1;
+//    }
+//    return false;
+//  }
+//  return 1;
   if (rcitem.IsNull())
     is_null = 1;
   else {

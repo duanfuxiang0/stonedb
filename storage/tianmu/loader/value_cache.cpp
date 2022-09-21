@@ -116,5 +116,40 @@ void ValueCache::CalcStrStats(types::BString &min_s, types::BString &max_s, uint
   }
 }
 
+void ValueCache::CalcDecStats(
+              types::BString &min_s, 
+              types::BString &max_s, 
+              types::BString &sum_s, 
+              uint &maxlen, 
+              const DTCollation &col) const {
+  maxlen = 0;
+  common::tianmu_int128_t sum_v_128 = 0;
+
+  for (size_t i = 0; i < values_.size(); ++i) {
+    if (!nulls_[i] && Size(i)) {
+      types::BString v(GetDataBytesPointer(i), Size(i));
+      if (v.size() > maxlen) maxlen = v.len;
+      common::tianmu_int128_t v_128(std::string(v.begin(), v.size()));
+      sum_v_128 += v_128;
+
+      if (min_s.IsNull())
+        min_s = v;
+      else {
+        common::tianmu_int128_t v_min_128(std::string(min_s.begin(), min_s.size()));
+        if (v_128 < v_min_128) min_s = v;
+      }
+
+      if (max_s.IsNull())
+        max_s = v;
+      else {
+        common::tianmu_int128_t v_max_128(std::string(max_s.begin(), max_s.size()));
+        if (v_128 > v_max_128) max_s = v;
+      }
+    }
+  }
+  std::string ss = sum_v_128.convert_to<std::string>();
+  sum_s = types::BString(ss.c_str(), ss.length(), true);
+}
+
 }  // namespace loader
 }  // namespace Tianmu

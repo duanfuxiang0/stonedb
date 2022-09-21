@@ -481,8 +481,15 @@ void Engine::EncodeRecord(const std::string &table_path, int tid, Field **field,
       } break;
       case MYSQL_TYPE_NEWDECIMAL: {
         auto dec_f = dynamic_cast<Field_new_decimal *>(f);
-        *(int64_t *)ptr = std::lround(dec_f->val_real() * types::PowOfTen(dec_f->dec));
-        ptr += sizeof(int64_t);
+        char buff[common::MAX_DEC_PRECISION];
+        my_decimal md;
+        dec_f->val_decimal(&md);
+        String md_str(buff, common::MAX_DEC_PRECISION, dec_f->charset());
+        my_decimal2string(E_DEC_FATAL_ERROR, &md, 0, 0, 0, &md_str);
+        *(uint32_t *)ptr = md_str.length();
+        ptr += sizeof(uint32_t);
+        std::memcpy(ptr, md_str.c_ptr(), md_str.length());
+        ptr += md_str.length();
       } break;
       case MYSQL_TYPE_TIME:
       case MYSQL_TYPE_TIME2:

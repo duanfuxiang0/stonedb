@@ -21,6 +21,8 @@
 #include <string>
 #include <variant>
 
+#include "common/common_definitions.h"
+
 namespace Tianmu {
 namespace core {
 class Value final {
@@ -34,6 +36,7 @@ class Value final {
   bool IsDouble() const { return std::holds_alternative<double>(var); }
   bool IsString() const { return std::holds_alternative<std::string>(var); }
   bool IsStringView() const { return std::holds_alternative<std::string_view>(var); }
+  bool IsDecimal() const { return std::holds_alternative<common::tianmu_int128_t>(var); }
 
   void SetInt(int64_t v) { var = v; }
   int64_t &GetInt() { return std::get<int64_t>(var); }
@@ -51,8 +54,17 @@ class Value final {
   std::string_view &GetStringView() { return std::get<std::string_view>(var); }
   const std::string_view &GetStringView() const { return std::get<std::string_view>(var); }
 
+  void SetInt128(common::tianmu_int128_t v) { var = v; }
+  common::tianmu_int128_t &GetInt128() { return std::get<common::tianmu_int128_t>(var); }
+  const common::tianmu_int128_t &GetInt128() const { return std::get<common::tianmu_int128_t>(var); }
+
  private:
-  std::variant<std::monostate, int64_t, double, std::string, std::string_view> var;
+  std::variant<std::monostate, 
+         int64_t, 
+         double, 
+         std::string, 
+         std::string_view,
+         common::tianmu_int128_t> var;
 };
 }  // namespace core
 }  // namespace Tianmu

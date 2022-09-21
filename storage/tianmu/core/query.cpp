@@ -543,17 +543,17 @@ void Query::GetPrecisionScale(Item *item, int &precision, int &scale, bool max_s
   //  precision = 19;
   //  scale = integers > 19 ? 0 :  19 - integers;
   //}
-  if (scale > 18) {
-    precision -= (scale - 18);
-    scale = 18;
+  if (scale > common::MAX_DEC_PRECISION) {
+    precision -= (scale - common::MAX_DEC_PRECISION);
+    scale = common::MAX_DEC_PRECISION;
   }
-  if (precision > 18) precision = 18;
+  if (precision > common::MAX_DEC_PRECISION) precision = common::MAX_DEC_PRECISION;
 
   Item_func *item_func = dynamic_cast<Item_func *>(item);
-  if (max_scale && precision < 18 && item_func && std::strcmp(item_func->func_name(), "/") == 0) {
-    scale += 18 - precision;
-    if (scale > 15) scale = 15;
-    precision = 18;
+  if (max_scale && precision < common::MAX_DEC_PRECISION && item_func && std::strcmp(item_func->func_name(), "/") == 0) {
+    scale += common::MAX_DEC_PRECISION - precision;
+    if (scale > (common::MAX_DEC_PRECISION-3)) scale = common::MAX_DEC_PRECISION - 3;
+    precision = common::MAX_DEC_PRECISION;
   }
 }
 

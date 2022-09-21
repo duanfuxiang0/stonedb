@@ -105,6 +105,11 @@ class ValueCache final {
   void CalcIntStats(std::optional<common::double_int_t> nv);
   void CalcRealStats(std::optional<common::double_int_t> nv);
   void CalcStrStats(types::BString &min_s, types::BString &max_s, uint &maxlen, const DTCollation &col) const;
+  void CalcDecStats(types::BString &min_s, 
+                    types::BString &max_s, 
+                    types::BString &sum_s, 
+                    uint &maxlen, 
+                    const DTCollation &col) const;
 
   int64_t MinInt() const { return min_i_; }
   int64_t MaxInt() const { return max_i_; }

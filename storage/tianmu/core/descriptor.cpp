@@ -1761,12 +1761,14 @@ bool Descriptor::CopyDesCond(MIUpdatingIterator &mit) {
     if (((column_type == common::CT::VARCHAR || column_type == common::CT::STRING) && is_lookup) ||
         ATI::IsNumericType(column_type) || ATI::IsDateTimeType(column_type))
       pack_type = common::PackType::INT;
-    else
+    else if (ATI::IsDecimalType(column_type)) {
+      pack_type = common::PackType::DEC;
+    } else
       pack_type = common::PackType::STR;
 
     if ((op == common::Operator::O_IN || op == common::Operator::O_NOT_IN)) {
       vcolumn::MultiValColumn *multival_column = static_cast<vcolumn::MultiValColumn *>(val1.vc);
-      if (pack_type == common::PackType::STR) {
+      if (pack_type == common::PackType::STR || pack_type == common::PackType::DEC) {
         val1.cond_value.clear();
         return multival_column->CopyCond(mit, val1.cond_value, collation);
       } else if (pack_type == common::PackType::INT) {
