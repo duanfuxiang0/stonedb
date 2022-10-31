@@ -4615,6 +4615,7 @@ bool st_select_lex::validate_base_options(LEX *lex, ulonglong options_arg) const
                            SELECT_ALL |
                            SELECT_SMALL_RESULT |
                            SELECT_BIG_RESULT |
+                           SELECT_ROUGHLY |
                            OPTION_BUFFER_RESULT |
                            OPTION_FOUND_ROWS |
                            OPTION_TO_QUERY_CACHE)));

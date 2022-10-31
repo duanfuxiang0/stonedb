@@ -282,7 +282,9 @@ void GroupTable::Initialize(int64_t max_no_groups, bool parallel_allowed) {
     }
     operation[i] = desc.operation;
     distinct[i] = desc.distinct;
-    if (distinct[i]) no_columns_with_distinct++;
+    if (distinct[i]) {
+      no_columns_with_distinct++;
+    }
   }
   if (no_columns_with_distinct > 0) distinct_present = true;
   // calculate column byte sizes

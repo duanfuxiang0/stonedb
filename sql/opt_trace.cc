@@ -1145,8 +1145,9 @@ void Opt_trace_context::end()
 
 bool Opt_trace_context::support_I_S() const
 {
-  return (pimpl != NULL) && (pimpl->current_stmt_in_gen != NULL) &&
-    pimpl->current_stmt_in_gen->support_I_S();
+  return true;
+//  return (pimpl != NULL) && (pimpl->current_stmt_in_gen != NULL) &&
+//    pimpl->current_stmt_in_gen->support_I_S();
 }
 
 

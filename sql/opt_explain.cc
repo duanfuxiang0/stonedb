@@ -2199,8 +2199,7 @@ bool explain_query(THD *ethd, SELECT_LEX_UNIT *unit)
     /*
       The warnings system requires input in utf8, see mysqld_show_warnings().
     */
-    unit->print(&str, enum_query_type(QT_TO_SYSTEM_CHARSET |
-                                      QT_SHOW_SELECT_NUMBER));
+    unit->print(&str, enum_query_type(QT_TO_SYSTEM_CHARSET | QT_SHOW_SELECT_NUMBER));
     str.append('\0');
     push_warning(ethd, Sql_condition::SL_NOTE, ER_YES, str.ptr());
   }

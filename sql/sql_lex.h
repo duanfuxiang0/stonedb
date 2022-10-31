@@ -969,6 +969,7 @@ public:
     before the full resolver process is complete.
   */
   bool has_sj_nests;
+  bool tianmu_sj_distinct = false;     ///< Used in TIANMU>
   /// Number of partitioned tables
   uint partitioned_table_count;
   /**

@@ -5147,6 +5147,11 @@ static bool execute_sqlcom_select(THD *thd, TABLE_LIST *all_tables)
   if (is_timer_applicable_to_statement(thd))
     statement_timer_armed= set_statement_timer(thd);
 
+
+  if (true) {
+    thd->variables.optimizer_switch |= OPTIMIZER_SWITCH_SEMIJOIN;
+  }
+
   if (!(res= open_tables_for_query(thd, all_tables, 0)))
   {
     MYSQL_SELECT_START(const_cast<char*>(thd->query().str));

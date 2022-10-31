@@ -379,8 +379,10 @@ void CompiledQuery::CQStep::Print(Query *query) {
       std::sprintf(buf, "T:%d.MODE(%s,%ld,%ld)", N(t1.n), b_tmpar, n1, n2);
       break;
     case StepType::JOIN_T:
-      // This step exists but should not be displayed
-      return;
+      // This step exists but should not be displayed, why?
+      // (just for debug)
+      std::sprintf(buf, "T:%d.JOIN_T(T:%d)", N(t1.n), N(t2.n));
+      break;
     case StepType::LEFT_JOIN_ON: {
       std::sprintf(buf, "T:%d.LEFT_JOIN_ON({", N(t1.n));
       int i = 0;
