@@ -842,9 +842,6 @@ AttributeTypeInfo Engine::GetAttrTypeInfo(const Field &field) {
     case MYSQL_TYPE_FLOAT:
     case MYSQL_TYPE_DOUBLE:
     case MYSQL_TYPE_LONGLONG:
-      if (field.flags & UNSIGNED_FLAG)
-        throw common::UnsupportedDataTypeException("UNSIGNED data types are not supported.");
-      [[fallthrough]];
     case MYSQL_TYPE_YEAR:
     case MYSQL_TYPE_TIMESTAMP:
     case MYSQL_TYPE_DATETIME:
@@ -886,8 +883,6 @@ AttributeTypeInfo Engine::GetAttrTypeInfo(const Field &field) {
       throw common::UnsupportedDataTypeException();
     }
     case MYSQL_TYPE_NEWDECIMAL: {
-      if (field.flags & UNSIGNED_FLAG)
-        throw common::UnsupportedDataTypeException("UNSIGNED data types are not supported.");
       const Field_new_decimal *fnd = ((const Field_new_decimal *)&field);
       if (/*fnd->precision > 0 && */ fnd->precision <= 18 /*&& fnd->dec >= 0*/
           && fnd->dec <= fnd->precision)
