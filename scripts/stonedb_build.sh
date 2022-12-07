@@ -56,6 +56,7 @@ cmake ../../ \
 -DWITH_ROCKSDB=/usr/local/stonedb-gcc-rocksdb \
 -DWITH_BOOST=/usr/local/stonedb-boost \
 -DWITH_MARISA=/usr/local/stonedb-marisa \
+-DWITH_ROCKSDB=/usr/local/stonedb-gcc-rocksdb \
 2>&1 | tee -a ${build_log}
 
 # make
