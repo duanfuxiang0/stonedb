@@ -991,12 +991,20 @@ AttributeTypeInfo Engine::GetAttrTypeInfo(const Field &field) {
   throw;
 }
 
-void Engine::DeleteTable(const char *table, [[maybe_unused]] THD *thd) {
-  {
-    std::unique_lock<std::shared_mutex> index_guard(tables_keys_mutex);
-    index::TianmuTableIndex::DropIndexTable(table);
-    m_table_keys.erase(table);
+void Engine::Rollback(THD *thd, bool all, bool force_error_message) {
+  force_error_message = force_error_message || (!all && thd_test_options(thd, OPTION_NOT_AUTOCOMMIT));
+  TIANMU_LOG(LogCtl_Level::ERROR, "Roll back query '%s'", thd->query().str);
+  if (current_txn_) {
+    GetTx(thd)->Rollback(thd, force_error_message);
+    ClearTx(thd);
   }
+  thd->transaction_rollback_request = false;
+}
+
+void Engine::DeleteTable(const char *table, [[maybe_unused]] THD *thd) {
+
+  DeleteTableIndex(table, thd);
+  
   {
     std::unique_lock<std::shared_mutex> mem_guard(mem_table_mutex);
     DeltaTable::DropDeltaTable(table);
@@ -1334,6 +1342,7 @@ void Engine::RenameTable([[maybe_unused]] Transaction *trans_, const std::string
   filter_cache.RemoveIf([id](const FilterCoordinate &c) { return c[0] == int(id); });
   system::RenameFile(tianmu_data_dir / (from + common::TIANMU_EXT), tianmu_data_dir / (to + common::TIANMU_EXT));
   RenameRdbTable(from, to);
+  DeleteTableIndex(from, thd);
   UnregisterDeltaTable(from, to);
   TIANMU_LOG(LogCtl_Level::INFO, "Rename table %s to %s", from.c_str(), to.c_str());
 }
@@ -2248,6 +2257,18 @@ void Engine::AddTableIndex(const std::string &table_path, TABLE *table, [[maybe_
     m_table_keys[table_path] = tab;
   }
 }
+
+void Engine::DeleteTableIndex(const std::string &table_path, [[maybe_unused]] THD *thd) {
+  std::unique_lock<std::shared_mutex> index_guard(tables_keys_mutex);
+  if (index::TianmuTableIndex::FindIndexTable(table_path)) {
+    index::TianmuTableIndex::DropIndexTable(table_path);
+  }
+  auto iter = m_table_keys.find(table_path);
+  if (iter != m_table_keys.end()) {
+    m_table_keys.erase(table_path);
+  }
+}
+
 
 std::shared_ptr<index::TianmuTableIndex> Engine::GetTableIndex(const std::string &table_path) {
   std::shared_lock<std::shared_mutex> guard(tables_keys_mutex);
