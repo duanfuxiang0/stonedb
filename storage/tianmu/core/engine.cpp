@@ -273,14 +273,14 @@ int Engine::Init(uint engine_slot) {
       std::function<void()> func;
     } jobs[] = {
         {60, [this]() { this->LogStat(); }},
-        {5,
-         [this]() {
-           for (auto &delta : m_table_deltas) {
-             TIANMU_LOG(LogCtl_Level::INFO, "delta table id: %d current load id: %d, merge id: %d, row_id: %d",
-                        delta.second->GetDeltaTableID(), delta.second->load_id.load(), delta.second->merge_id.load(),
-                        delta.second->row_id.load());
-           }
-         }},
+        {5, [this]() {
+          for (auto &delta : m_table_deltas) {
+            TIANMU_LOG(
+                LogCtl_Level::INFO,
+                "delta table id: %d current load id: %d, merge id: %d, row_id: %d",
+                delta.second->GetDeltaTableID(), delta.second->load_id.load(), delta.second->merge_id.load(), delta.second->row_id.load());
+          }
+        }},
         {60 * 5,
          []() {
            TIANMU_LOG(
@@ -443,17 +443,18 @@ void Engine::EncodeInsertRecord(const std::string &table_path, int table_id, Fie
           v = TIANMU_TINYINT_MAX;
         else if (v < TIANMU_TINYINT_MIN)
           v = TIANMU_TINYINT_MIN;
-        *(int64_t *)ptr = v;
+        *(int64_t *) ptr = v;
         deltaRecord.field_head_[i] = sizeof(int64_t);
         ptr += sizeof(int64_t);
-      } break;
+      }
+        break;
       case MYSQL_TYPE_SHORT: {
         int64_t v = f->val_int();
         if (v > TIANMU_SMALLINT_MAX)
           v = TIANMU_SMALLINT_MAX;
         else if (v < TIANMU_SMALLINT_MIN)
           v = TIANMU_SMALLINT_MIN;
-        *(int64_t *)ptr = v;
+        *(int64_t *) ptr = v;
         deltaRecord.field_head_[i] = sizeof(int64_t);
         ptr += sizeof(int64_t);
       }
@@ -489,15 +490,8 @@ void Engine::EncodeInsertRecord(const std::string &table_path, int table_id, Fie
         *(int64_t *) ptr = v;
         deltaRecord.field_head_[i] = sizeof(int64_t);
         ptr += sizeof(int64_t);
-      } break;
-      case MYSQL_TYPE_BIT: {
-        int64_t v = f->val_int();
-        ASSERT(v < 0, "bit type data should never less than 0.");
-        if (v > common::TIANMU_BIGINT_MAX)  // how can v > bigint max ??
-          v = common::TIANMU_BIGINT_MAX;    // TODO(fix with bit prec)
-        *(int64_t *)ptr = v;
-        ptr += sizeof(int64_t);
-      } break;
+      }
+        break;
       case MYSQL_TYPE_DECIMAL:
       case MYSQL_TYPE_FLOAT:
       case MYSQL_TYPE_DOUBLE: {
@@ -578,8 +572,8 @@ void Engine::EncodeInsertRecord(const std::string &table_path, int table_id, Fie
       case MYSQL_TYPE_ENUM:
       case MYSQL_TYPE_GEOMETRY:
       case MYSQL_TYPE_NULL:
-      default:
-        throw common::Exception("unsupported mysql type " + std::to_string(f->type()));
+      case MYSQL_TYPE_BIT:
+      default:throw common::Exception("unsupported mysql type " + std::to_string(f->type()));
         break;
     }
     ASSERT(ptr <= buf.get() + size, "Buffer overflow");
@@ -997,6 +991,10 @@ AttributeTypeInfo Engine::GetAttrTypeInfo(const Field &field) {
       return AttributeTypeInfo(Engine::GetCorrespondingType(field), notnull, (ushort) field.field_length, 0, auto_inc,
                                DTCollation(), fmt, filter);
     case MYSQL_TYPE_TIME:return AttributeTypeInfo(common::ColumnType::TIME, notnull, 0, 0, false, DTCollation(), fmt, filter);
+      return AttributeTypeInfo(Engine::GetCorrespondingType(field), notnull, (ushort)field.field_length, 0, auto_inc,
+                               DTCollation(), fmt, bloom_filter);
+    case MYSQL_TYPE_TIME:
+      return AttributeTypeInfo(common::ColumnType::TIME, notnull, 0, 0, false, DTCollation(), fmt, bloom_filter);
     case MYSQL_TYPE_STRING:
     case MYSQL_TYPE_VARCHAR: {
       if (field.field_length > FIELD_MAXLENGTH)
@@ -1028,13 +1026,6 @@ AttributeTypeInfo Engine::GetAttrTypeInfo(const Field &field) {
       }
       throw common::UnsupportedDataTypeException();
     }
-    case MYSQL_TYPE_BIT: {
-      const Field_bit_as_char *f_bit = ((const Field_bit_as_char *)&field);
-      if (/*f_bit->field_length > 0 && */ f_bit->field_length <= common::kTianmuBitMaxPrec)
-        return AttributeTypeInfo(common::ColumnType::NUM, notnull, f_bit->field_length);
-      throw common::UnsupportedDataTypeException(
-          "The bit(M) type, M must be less than or equal to 63 in tianmu engine.");
-    }
     case MYSQL_TYPE_NEWDECIMAL: {
       const Field_new_decimal *fnd = ((const Field_new_decimal *) &field);
       if (/*fnd->precision > 0 && */ fnd->precision <= 18 /*&& fnd->dec >= 0*/
@@ -1064,6 +1055,9 @@ AttributeTypeInfo Engine::GetAttrTypeInfo(const Field &field) {
               return AttributeTypeInfo(common::ColumnType::BIN, notnull, field.field_length, 0, auto_inc, DTCollation(),
                                        fmt, filter);
             default:throw common::UnsupportedDataTypeException();
+                                       fmt, bloom_filter);
+            default:
+              throw common::UnsupportedDataTypeException();
           }
         }
       }
@@ -1302,6 +1296,7 @@ int Engine::SetUpCacheFolder(const std::string &cachefolder_path) {
 std::string get_parameter_name(enum tianmu_var_name vn) {
   DEBUG_ASSERT(static_cast<int>(vn) >= 0 &&
       static_cast<int>(vn) <= static_cast<int>(tianmu_var_name::TIANMU_VAR_LIMIT));
+               static_cast<int>(vn) <= static_cast<int>(TianmuVarName::kTianmuVarLimit));
   return tianmu_var_name_strings[static_cast<int>(vn)];
 }
 
@@ -1383,6 +1378,11 @@ int get_parameter(THD *thd, enum tianmu_var_name vn, longlong &result, std::stri
       case tianmu_var_name::TIANMU_TIANMUEXPRESSIONS:
       case tianmu_var_name::TIANMU_PARALLEL_AGGR:
       case tianmu_var_name::TIANMU_ABORT_ON_COUNT:my_bool null_value;
+      case TianmuVarName::kTianmuThrottle:
+      case TianmuVarName::kTianmuExpressions:
+      case TianmuVarName::kTianmuParallelAggr:
+      case TianmuVarName::kTianmuAbortOnCount:
+        my_bool null_value;
         result = m_entry->val_int(&null_value);
         break;
       default:result = -1;
@@ -1628,14 +1628,14 @@ void Engine::ProcessDeltaStoreMerge() {
           // delta debug
           bool for_delta_debug = true;
           if ((record_count >= tianmu_sysvar_insert_numthreshold ||
-               (sleep_cnts.count(name) && sleep_cnts[name] > static_cast<int>(tianmu_sysvar_insert_cntthreshold)) &&
+              (sleep_cnts.count(name) && sleep_cnts[name] > static_cast<int>(tianmu_sysvar_insert_cntthreshold)) &&
               for_delta_debug)) {
             auto share = ha_tianmu_engine_->getTableShare(name);
             auto table_id = share->TabID();
             utils::BitSet null_mask(share->NumOfCols());
             std::unique_ptr<char[]> buf(new char[sizeof(uint32_t) + name.size() + 1 + null_mask.data_size()]);
             char *ptr = buf.get();
-            *(uint32_t *)ptr = table_id;  // table id
+            *(uint32_t *) ptr = table_id;  // table id
             ptr += sizeof(uint32_t);
             std::memcpy(ptr, name.c_str(), name.size());
             ptr += name.size();
@@ -1740,8 +1740,8 @@ void Engine::LogStat() {
              "delta delete: %lu/%lu, "
              "failed delta delete: %lu/%lu, "
              "update: %lu/%lu",
-             tianmu_stat.select - saved.select, tianmu_stat.select, tianmu_stat.loaded - saved.loaded,
-             tianmu_stat.loaded, tianmu_stat.load_cnt - saved.load_cnt, tianmu_stat.load_cnt,
+             tianmu_stat.select - saved.select, tianmu_stat.select,
+             tianmu_stat.loaded - saved.loaded, tianmu_stat.loaded, tianmu_stat.load_cnt - saved.load_cnt, tianmu_stat.load_cnt,
              tianmu_stat.loaded_dup - saved.loaded_dup, tianmu_stat.loaded_dup,
              tianmu_stat.delta_insert - saved.delta_insert, tianmu_stat.delta_insert,
              tianmu_stat.failed_delta_insert - saved.failed_delta_insert, tianmu_stat.failed_delta_insert,
@@ -1752,7 +1752,7 @@ void Engine::LogStat() {
              tianmu_stat.update - saved.update, tianmu_stat.update);
 
   if (tianmu_stat.loaded == saved.loaded && tianmu_stat.delta_insert > saved.delta_insert) {
-    TIANMU_LOG(LogCtl_Level::ERROR, "No data loaded from delta store");  // why this log? need add update delete?
+    TIANMU_LOG(LogCtl_Level::ERROR, "No data loaded from delta store"); // why this log? need add update delete?
   }
 
   // update with last minute statistics
@@ -1875,7 +1875,8 @@ void Engine::DeleteToDelta(const std::string &table_path, std::shared_ptr<TableS
 
   uint32_t buf_sz = 0;
   std::unique_ptr<char[]> buf;
-  EncodeDeleteRecord(table_path, share->TabID(), buf, buf_sz);
+  EncodeDeleteRecord(table_path, share->TabID(),buf, buf_sz);
+  auto tm_table = share->GetSnapshot();
   tm_table->DeleteToDelta(row_id, std::move(buf), buf_sz);
 }
 
@@ -1919,14 +1920,22 @@ int Engine::InsertRow(const std::string &table_path, [[maybe_unused]] Transactio
 int Engine::UpdateRow(const std::string &table_path, TABLE *table, std::shared_ptr<TableShare> &share, uint64_t row_id,
                       const uchar *old_data, uchar *new_data) {
   int ret = 0;
-  if (tianmu_sysvar_insert_delayed && table->s->tmp_table == NO_TMP_TABLE && tianmu_sysvar_enable_rowstore) {
-    UpdateToDelta(table_path, share, table, row_id, old_data, new_data);
-    tianmu_stat.delta_update++;
-  } else {
-    auto tm_table = current_txn_->GetTableByPath(table_path);
-    ret = tm_table->Update(table, row_id, old_data, new_data);
+  try {
+    if (tianmu_sysvar_insert_delayed && table->s->tmp_table == NO_TMP_TABLE && tianmu_sysvar_enable_rowstore) {
+      UpdateToDelta(table_path, share, table, row_id, old_data, new_data);
+      tianmu_stat.delta_update++;
+    } else {
+      auto tm_table = current_txn_->GetTableByPath(table_path);
+      ret = tm_table->Update(table, row_id, old_data, new_data);
+    }
+    return ret;
+  } catch (common::Exception &e) {
+    TIANMU_LOG(LogCtl_Level::ERROR, "delta update failed. %s %s", e.what(), e.trace().c_str());
+  } catch (std::exception &e) {
+    TIANMU_LOG(LogCtl_Level::ERROR, "delta update failed. %s", e.what());
+  } catch (...) {
+    TIANMU_LOG(LogCtl_Level::ERROR, "delta update failed.");
   }
-  return ret;
   if (tianmu_sysvar_insert_delayed) {
     tianmu_stat.failed_delta_update++;
     ret = 1;
@@ -1936,14 +1945,22 @@ int Engine::UpdateRow(const std::string &table_path, TABLE *table, std::shared_p
 int Engine::DeleteRow(const std::string &table_path, TABLE *table, std::shared_ptr<TableShare> &share,
                       uint64_t row_id) {
   int ret = 0;
-  if (tianmu_sysvar_insert_delayed && table->s->tmp_table == NO_TMP_TABLE && tianmu_sysvar_enable_rowstore) {
-    DeleteToDelta(table_path, share, table, row_id);
-    tianmu_stat.delta_delete++;
-  } else {
-    auto tm_table = current_txn_->GetTableByPath(table_path);
-    ret = tm_table->Delete(table, row_id);
+  try {
+    if (tianmu_sysvar_insert_delayed && table->s->tmp_table == NO_TMP_TABLE && tianmu_sysvar_enable_rowstore) {
+      DeleteToDelta(table_path, share, table, row_id);
+      tianmu_stat.delta_delete++;
+    } else {
+      auto tm_table = current_txn_->GetTableByPath(table_path);
+      ret = tm_table->Delete(table, row_id);
+    }
+    return ret;
+  } catch (common::Exception &e) {
+    TIANMU_LOG(LogCtl_Level::ERROR, "delta delete failed. %s %s", e.what(), e.trace().c_str());
+  } catch (std::exception &e) {
+    TIANMU_LOG(LogCtl_Level::ERROR, "delta delete failed. %s", e.what());
+  } catch (...) {
+    TIANMU_LOG(LogCtl_Level::ERROR, "delta delete failed.");
   }
-  return ret;
   if (tianmu_sysvar_insert_delayed) {
     tianmu_stat.failed_delta_delete++;
     ret = 1;
