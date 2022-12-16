@@ -89,131 +89,102 @@ const char **ha_tianmu::bas_ext() const {
   return ha_rcbase_exts;
 }
 
-namespace {
-std::vector<bool> GetAttrsUseIndicator(TABLE *table) {
-  int col_id = 0;
-  std::vector<bool> attr_uses;
-  enum_sql_command sql_command = SQLCOM_END;
-  if (table->in_use && table->in_use->lex)
-    sql_command = table->in_use->lex->sql_command;
-  bool check_tianmu_delete_or_update = (sql_command == SQLCOM_DELETE) || (sql_command == SQLCOM_DELETE_MULTI) ||
-                                       (sql_command == SQLCOM_UPDATE) || (sql_command == SQLCOM_UPDATE_MULTI);
-
-  for (Field **field = table->field; *field; ++field, ++col_id) {
-    /*
-      The binlog in row format will record the information in each column of the currently modified row and generate a
-      change log, The information of each column in the current row is obtained from the engine layer, so when the
-      current statement is delete or update, you need to fill in data for each column.
-      Here, should set each column to be valid.
-    */
-    if (check_tianmu_delete_or_update) {
-      attr_uses.push_back(true);
-      continue;
+  switch (f->type()) {
+    case MYSQL_TYPE_TINY:
+    case MYSQL_TYPE_SHORT:
+    case MYSQL_TYPE_LONG:
+    case MYSQL_TYPE_INT24:
+    case MYSQL_TYPE_LONGLONG:
+    case MYSQL_TYPE_BIT:
+      v.SetInt(f->val_int());
+      break;
+    case MYSQL_TYPE_DECIMAL:
+    case MYSQL_TYPE_FLOAT:
+    case MYSQL_TYPE_DOUBLE:
+      v.SetDouble(f->val_real());
+      break;
+    case MYSQL_TYPE_NEWDECIMAL: {
+      auto dec_f = dynamic_cast<Field_new_decimal *>(f);
+      v.SetInt(std::lround(dec_f->val_real() * types::PowOfTen(dec_f->dec)));
+      break;
     }
-    if (bitmap_is_set(table->read_set, col_id) || bitmap_is_set(table->write_set, col_id))
-      attr_uses.push_back(true);
-    else
-      attr_uses.push_back(false);
+    case MYSQL_TYPE_TIMESTAMP: {
+      MYSQL_TIME my_time;
+      std::memset(&my_time, 0, sizeof(my_time));
+      f->get_time(&my_time);
+      // convert to UTC
+      if (!common::IsTimeStampZero(my_time)) {
+        my_bool myb;
+        my_time_t secs_utc = current_txn_->Thd()->variables.time_zone->TIME_to_gmt_sec(&my_time, &myb);
+        common::GMTSec2GMTTime(&my_time, secs_utc);
+      }
+      types::DT dt = {};
+      dt.year = my_time.year;
+      dt.month = my_time.month;
+      dt.day = my_time.day;
+      dt.hour = my_time.hour;
+      dt.minute = my_time.minute;
+      dt.second = my_time.second;
+      v.SetInt(dt.val);
+      break;
+    }
+    case MYSQL_TYPE_TIME:
+    case MYSQL_TYPE_TIME2:
+    case MYSQL_TYPE_DATE:
+    case MYSQL_TYPE_DATETIME:
+    case MYSQL_TYPE_NEWDATE:
+    case MYSQL_TYPE_TIMESTAMP2:
+    case MYSQL_TYPE_DATETIME2: {
+      MYSQL_TIME my_time;
+      std::memset(&my_time, 0, sizeof(my_time));
+      f->get_time(&my_time);
+      types::DT dt = {};
+      dt.year = my_time.year;
+      dt.month = my_time.month;
+      dt.day = my_time.day;
+      dt.hour = my_time.hour;
+      dt.minute = my_time.minute;
+      dt.second = my_time.second;
+      v.SetInt(dt.val);
+      break;
+    }
+    case MYSQL_TYPE_YEAR:  // what the hell?
+    {
+      types::DT dt = {};
+      dt.year = f->val_int();
+      v.SetInt(dt.val);
+      break;
+    }
+    case MYSQL_TYPE_VARCHAR:
+    case MYSQL_TYPE_TINY_BLOB:
+    case MYSQL_TYPE_MEDIUM_BLOB:
+    case MYSQL_TYPE_LONG_BLOB:
+    case MYSQL_TYPE_BLOB:
+    case MYSQL_TYPE_VAR_STRING:
+    case MYSQL_TYPE_STRING: {
+      String str;
+      f->val_str(&str);
+      v.SetString(const_cast<char *>(str.ptr()), str.length());
+      break;
+    }
+    case MYSQL_TYPE_SET:
+    case MYSQL_TYPE_ENUM:
+    case MYSQL_TYPE_GEOMETRY:
+    case MYSQL_TYPE_NULL:
+    default:
+      throw common::Exception("unsupported mysql type " + std::to_string(f->type()));
+      break;
   }
-  return attr_uses;
+  return v;
 }
-// for debug only, print all delta data
-static void DebugPrint(core::DeltaIterator &iter, Field **fields, size_t field_size) {
-  TIANMU_LOG(LogCtl_Level::DEBUG, ">>>================= delta insert record ================");
-  core::DeltaIterator clone_iter(iter.GetTable(), iter.GetAttrs());
-  while (clone_iter.Valid()) {
-    auto record = clone_iter.GetData();
-    core::Engine::DecodeInsertRecord(record.data(), record.size(), fields);
-    // print a delta row
-    std::stringstream ss;
-    ss << "[";
-    for (size_t i = 0; i < field_size; i++) {
-      Field *f = fields[i];
-      if (f->is_null()) {
-        ss << " {null} ";
-        continue;
-      }
-      switch (f->type()) {
-        case MYSQL_TYPE_TINY:
-        case MYSQL_TYPE_SHORT:
-        case MYSQL_TYPE_LONG:
-        case MYSQL_TYPE_INT24:
-        case MYSQL_TYPE_LONGLONG: {
-          int64_t v = f->val_int();
-          ss << " {" << v << "} ";
-        } break;
-        case MYSQL_TYPE_DECIMAL:
-        case MYSQL_TYPE_FLOAT:
-        case MYSQL_TYPE_DOUBLE: {
-          double v = f->val_real();
-          ss << " {" << v << "} ";
-        } break;
-        case MYSQL_TYPE_NEWDECIMAL: {
-          auto dec_f = dynamic_cast<Field_new_decimal *>(f);
-          auto dec = std::lround(dec_f->val_real() * types::PowOfTen(dec_f->dec));
-          auto v = f->val_int();
-          ss << " {" << v << "} ";
-        } break;
-        case MYSQL_TYPE_TIME:
-        case MYSQL_TYPE_TIME2:
-        case MYSQL_TYPE_DATE:
-        case MYSQL_TYPE_DATETIME:
-        case MYSQL_TYPE_NEWDATE:
-        case MYSQL_TYPE_TIMESTAMP2:
-        case MYSQL_TYPE_DATETIME2: {
-          MYSQL_TIME my_time;
-          std::memset(&my_time, 0, sizeof(my_time));
-          f->get_time(&my_time);
-          types::DT dt(my_time);
-          ss << " {" << dt.val << "} ";
-        } break;
-        case MYSQL_TYPE_TIMESTAMP: {
-          MYSQL_TIME my_time;
-          std::memset(&my_time, 0, sizeof(my_time));
-          f->get_time(&my_time);
-          auto saved = my_time.second_part;
-          // convert to UTC
-          if (!common::IsTimeStampZero(my_time)) {
-            my_bool myb;
-            my_time_t secs_utc = current_thd->variables.time_zone->TIME_to_gmt_sec(&my_time, &myb);
-            common::GMTSec2GMTTime(&my_time, secs_utc);
-          }
-          my_time.second_part = saved;
-          types::DT dt(my_time);
-          ss << " {" << dt.val << "} ";
-        } break;
-        case MYSQL_TYPE_YEAR:  // what the hell?
-        {
-          types::DT dt = {};
-          dt.year = f->val_int();
-          ss << " {" << dt.val << "} ";
-        } break;
-        case MYSQL_TYPE_VARCHAR:
-        case MYSQL_TYPE_TINY_BLOB:
-        case MYSQL_TYPE_MEDIUM_BLOB:
-        case MYSQL_TYPE_LONG_BLOB:
-        case MYSQL_TYPE_BLOB:
-        case MYSQL_TYPE_VAR_STRING:
-        case MYSQL_TYPE_STRING: {
-          String str;
-          f->val_str(&str);
-          ss << " {" << std::string(str.c_ptr(), str.length()) << "} ";
-        } break;
-        case MYSQL_TYPE_SET:
-        case MYSQL_TYPE_ENUM:
-        case MYSQL_TYPE_GEOMETRY:
-        case MYSQL_TYPE_NULL:
-        case MYSQL_TYPE_BIT:
-        default:
-          throw common::Exception("unsupported mysql type " + std::to_string(f->type()));
-          break;
-      }
-    }
-    ss << "]";
-    TIANMU_LOG(LogCtl_Level::DEBUG, "==%s==", ss.str().c_str());
-    clone_iter++;
-  }
-  TIANMU_LOG(LogCtl_Level::DEBUG, "================= delta insert record ================>>>");
+
+ha_tianmu::ha_tianmu(handlerton *hton, TABLE_SHARE *table_arg) : handler(hton, table_arg) {
+  ref_length = sizeof(uint64_t);
+}
+
+const char **ha_tianmu::bas_ext() const {
+  static const char *ha_rcbase_exts[] = {common::TIANMU_EXT, 0};
+  return ha_rcbase_exts;
 }
 
 }  // namespace
@@ -347,7 +318,8 @@ inline bool has_dup_key(std::shared_ptr<index::TianmuTableIndex> &indextab, TABL
       case MYSQL_TYPE_SHORT:
       case MYSQL_TYPE_LONG:
       case MYSQL_TYPE_INT24:
-      case MYSQL_TYPE_LONGLONG: {
+      case MYSQL_TYPE_LONGLONG:
+      case MYSQL_TYPE_BIT: {
         int64_t v = f->val_int();
         records.emplace_back((const char *)&v, sizeof(int64_t));
         break;
@@ -419,7 +391,6 @@ inline bool has_dup_key(std::shared_ptr<index::TianmuTableIndex> &indextab, TABL
       case MYSQL_TYPE_ENUM:
       case MYSQL_TYPE_GEOMETRY:
       case MYSQL_TYPE_NULL:
-      case MYSQL_TYPE_BIT:
       default:
         throw common::Exception("unsupported mysql type " + std::to_string(f->type()));
         break;
@@ -1752,6 +1723,15 @@ void ha_tianmu::key_convert(const uchar *key, uint key_len, std::vector<uint> co
         *(int64_t *)ptr = v;
         ptr += sizeof(int64_t);
       } break;
+      case MYSQL_TYPE_BIT: {
+        int64_t v = f->val_int();
+        if (v > common::TIANMU_BIGINT_MAX)  // TODO(fix with prec, like newdecimal)
+          v = common::TIANMU_BIGINT_MAX;
+        else if (v < common::TIANMU_BIGINT_MIN)
+          v = 0;
+        *(int64_t *)ptr = v;
+        ptr += sizeof(int64_t);
+      } break;
       case MYSQL_TYPE_DECIMAL:
       case MYSQL_TYPE_FLOAT:
       case MYSQL_TYPE_DOUBLE: {
@@ -1820,7 +1800,6 @@ void ha_tianmu::key_convert(const uchar *key, uint key_len, std::vector<uint> co
       case MYSQL_TYPE_ENUM:
       case MYSQL_TYPE_GEOMETRY:
       case MYSQL_TYPE_NULL:
-      case MYSQL_TYPE_BIT:
       default:
         throw common::Exception("unsupported mysql type " + std::to_string(f->type()));
         break;
