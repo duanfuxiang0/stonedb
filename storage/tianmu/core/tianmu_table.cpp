@@ -902,7 +902,7 @@ void TianmuTable::Field2VC(Field *f, loader::ValueCache &vc, size_t col) {
     case MYSQL_TYPE_STRING: {
       String buf;
       f->val_str(&buf);
-      if (m_attrs[col]->Type().IsLookup()) {
+      if (m_attrs[col]->Type().Lookup()) {
         types::BString s(buf.length() == 0 ? "" : buf.ptr(), buf.length());
         int64_t *buf = reinterpret_cast<int64_t *>(vc.Prepare(sizeof(int64_t)));
         *buf = m_attrs[col]->EncodeValue_T(s, true);
@@ -1281,9 +1281,9 @@ int TianmuTable::binlog_insert2load_block(std::vector<loader::ValueCache> &vcs, 
           if (v == common::NULL_VALUE_64)
             s = types::BString();
           else {
-            types::TianmuNum tianmu_d(v, m_attrs[att]->Type().GetScale(), m_attrs[att]->Type().IsFloat(),
-                                      m_attrs[att]->TypeName());
-            s = tianmu_d.ToBString();
+            types::TianmuNum tianmu_num(v, m_attrs[att]->Type().GetScale(), m_attrs[att]->Type().IsFloat(),
+                                        m_attrs[att]->TypeName());
+            s = tianmu_num.ToBString();
           }
           std::memcpy(ptr, s.GetDataBytesPointer(), s.size());
           ptr += s.size();
@@ -1345,8 +1345,8 @@ int TianmuTable::binlog_insert2load_block(std::vector<loader::ValueCache> &vcs, 
             ptr += ENCLOSE.length();
           } else {
             types::BString s;
-            if (m_attrs[att]->Type().IsLookup()) {
-              s = m_attrs[att]->DecodeValue_S(*(int64_t *) v);
+            if (m_attrs[att]->Type().Lookup()) {
+              s = m_attrs[att]->DecodeValue_S(*(int64_t *)v);
               v = s.GetDataBytesPointer();
               size = s.size();
             }
@@ -1402,6 +1402,123 @@ int TianmuTable::binlog_insert2load_block(std::vector<loader::ValueCache> &vcs, 
 
   return 0;
 }
+
+class DelayedInsertParser final {
+ public:
+  DelayedInsertParser(std::vector<std::unique_ptr<TianmuAttr>> &attrs, std::vector<std::unique_ptr<char[]>> *vec,
+                      uint packsize, std::shared_ptr<index::TianmuTableIndex> index)
+      : pack_size(packsize), attrs(attrs), vec(vec), index_table(index) {}
+
+  uint GetRows(uint no_of_rows, std::vector<loader::ValueCache> &value_buffers) {
+    int64_t start_row = attrs[0]->NumOfObj();
+
+    value_buffers.reserve(attrs.size());
+    for (size_t i = 0; i < attrs.size(); i++) {
+      value_buffers.emplace_back(pack_size, pack_size * 128);
+    }
+
+    uint no_of_rows_returned;
+    for (no_of_rows_returned = 0; no_of_rows_returned < no_of_rows; no_of_rows_returned++) {
+      if (processed == vec->size()) {
+        // no more to parse
+        return no_of_rows_returned;
+      }
+
+      auto ptr = (*vec)[processed].get();
+      // int  tid = *(int32_t *)ptr;
+      ptr += sizeof(int32_t);
+      std::string path(ptr);
+      ptr += path.length() + 1;
+      utils::BitSet null_mask(attrs.size(), ptr);
+      ptr += null_mask.data_size();
+      for (uint i = 0; i < attrs.size(); i++) {
+        auto &vc = value_buffers[i];
+        if (null_mask[i]) {
+          vc.ExpectedNull(true);
+          continue;
+        }
+        auto &attr(attrs[i]);
+        switch (attr->GetPackType()) {
+          case common::PackType::STR: {
+            uint32_t len = *(uint32_t *)ptr;
+            ptr += sizeof(uint32_t);
+            auto buf = vc.Prepare(len);
+            if (buf == nullptr) {
+              throw std::bad_alloc();
+            }
+            std::memcpy(buf, ptr, len);
+            vc.ExpectedSize(len);
+            ptr += len;
+          } break;
+          case common::PackType::INT: {
+            if (attr->Type().Lookup()) {
+              uint32_t len = *(uint32_t *)ptr;
+              ptr += sizeof(uint32_t);
+              types::BString s(len == 0 ? "" : ptr, len);
+              int64_t *buf = reinterpret_cast<int64_t *>(vc.Prepare(sizeof(int64_t)));
+              *buf = attr->EncodeValue_T(s, true);
+              vc.ExpectedSize(sizeof(int64_t));
+              ptr += len;
+            } else {
+              int64_t *buf = reinterpret_cast<int64_t *>(vc.Prepare(sizeof(int64_t)));
+              *buf = *(int64_t *)ptr;
+
+              if (attr->GetIfAutoInc()) {
+                if (*buf == 0)  // Value of auto inc column was not assigned by user
+                  *buf = attr->AutoIncNext();
+                if (static_cast<uint64_t>(*buf) > attr->GetAutoInc()) {
+                  if (*buf > 0 || ((attr->TypeName() == common::ColumnType::BIGINT) && attr->GetIfUnsigned()))
+                    attr->SetAutoInc(*buf);
+                }
+              }
+              vc.ExpectedSize(sizeof(int64_t));
+              ptr += sizeof(int64_t);
+            }
+          } break;
+          default:
+            break;
+        }
+      }
+      for (auto &vc : value_buffers) {
+        vc.Commit();
+      }
+
+      processed++;
+      // insert index into kvstore
+      if (InsertIndex(value_buffers, start_row) != common::ErrorCode::SUCCESS) {
+        for (auto &vc : value_buffers) {
+          vc.Rollback();
+        }
+      }
+    }
+    return no_of_rows_returned;
+  }
+
+  common::ErrorCode InsertIndex(std::vector<loader::ValueCache> &vcs, int64_t start_row) {
+    if (!index_table)
+      return common::ErrorCode::SUCCESS;
+
+    size_t row_idx = vcs[0].NumOfValues() - 1;
+    std::vector<uint> cols = index_table->KeyCols();
+    std::vector<std::string> fields;
+    for (auto &col : cols) {
+      fields.emplace_back(vcs[col].GetDataBytesPointer(row_idx), vcs[col].Size(row_idx));
+    }
+
+    if (index_table->InsertIndex(current_txn_, fields, start_row + row_idx) == common::ErrorCode::DUPP_KEY) {
+      TIANMU_LOG(LogCtl_Level::DEBUG, "Delay insert discard this row for duplicate key");
+      return common::ErrorCode::DUPP_KEY;
+    }
+    return common::ErrorCode::SUCCESS;
+  }
+
+ private:
+  uint processed = 0;
+  uint pack_size;
+  std::vector<std::unique_ptr<TianmuAttr>> &attrs;
+  std::vector<std::unique_ptr<char[]>> *vec;
+  std::shared_ptr<index::TianmuTableIndex> index_table;
+};
 
 uint64_t TianmuTable::ProcessDelayed(system::IOParameters &iop) {
   std::string str(basename(const_cast<char *>(iop.Path())));
