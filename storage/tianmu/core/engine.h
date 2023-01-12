@@ -191,7 +191,7 @@ class Engine final {
   std::unique_ptr<char[]> GetRecord(size_t &len);
 
   static void EncodeInsertRecord(const std::string &table_path, int table_id, Field **field, size_t col, size_t blobs,
-                                 std::unique_ptr<char[]> &buf, uint32_t &size);
+                                 std::unique_ptr<char[]> &buf, uint32_t &size, THD *thd);
   static void EncodeUpdateRecord(const std::string &table_path, int table_id,
                                  std::unordered_map<uint, Field *> update_fields, size_t field_count, size_t blobs,
                                  std::unique_ptr<char[]> &buf, uint32_t &buf_size);

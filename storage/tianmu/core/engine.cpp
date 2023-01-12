@@ -398,7 +398,7 @@ Engine::~Engine() {
 }
 
 void Engine::EncodeInsertRecord(const std::string &table_path, int table_id, Field **field, size_t col, size_t blobs,
-                                std::unique_ptr<char[]> &buf, uint32_t &size) {
+                                std::unique_ptr<char[]> &buf, uint32_t &size, THD *thd) {
   size = blobs > 0 ? 4_MB : 128_KB;
   buf.reset(new char[size]);
   char *ptr = buf.get();
@@ -437,58 +437,18 @@ void Engine::EncodeInsertRecord(const std::string &table_path, int table_id, Fie
     }
 
     switch (f->type()) {
-      case MYSQL_TYPE_TINY: {
-        int64_t v = f->val_int();
-        if (v > TIANMU_TINYINT_MAX)
-          v = TIANMU_TINYINT_MAX;
-        else if (v < TIANMU_TINYINT_MIN)
-          v = TIANMU_TINYINT_MIN;
-        *reinterpret_cast<int64_t *>( ptr) = v;
-        deltaRecord.field_head_[i] = sizeof(int64_t);
-        ptr += sizeof(int64_t);
-      }
-        break;
-      case MYSQL_TYPE_SHORT: {
-        int64_t v = f->val_int();
-        if (v > TIANMU_SMALLINT_MAX)
-          v = TIANMU_SMALLINT_MAX;
-        else if (v < TIANMU_SMALLINT_MIN)
-          v = TIANMU_SMALLINT_MIN;
-        *reinterpret_cast<int64_t *>( ptr) = v;
-        deltaRecord.field_head_[i] = sizeof(int64_t);
-        ptr += sizeof(int64_t);
-      }
-        break;
-      case MYSQL_TYPE_LONG: {
-        int64_t v = f->val_int();
-        if (v > std::numeric_limits<int>::max())
-          v = std::numeric_limits<int>::max();
-        else if (v < TIANMU_INT_MIN)
-          v = TIANMU_INT_MIN;
-        *reinterpret_cast<int64_t *>( ptr) = v;
-        deltaRecord.field_head_[i] = sizeof(int64_t);
-        ptr += sizeof(int64_t);
-      }
-        break;
-      case MYSQL_TYPE_INT24: {
-        int64_t v = f->val_int();
-        if (v > TIANMU_MEDIUMINT_MAX)
-          v = TIANMU_MEDIUMINT_MAX;
-        else if (v < TIANMU_MEDIUMINT_MIN)
-          v = TIANMU_MEDIUMINT_MIN;
-        *reinterpret_cast<int64_t *>( ptr) = v;
-        deltaRecord.field_head_[i] = sizeof(int64_t);
-        ptr += sizeof(int64_t);
-      }
-        break;
+      case MYSQL_TYPE_TINY:
+      case MYSQL_TYPE_SHORT:
+      case MYSQL_TYPE_LONG:
+      case MYSQL_TYPE_INT24:
       case MYSQL_TYPE_LONGLONG: {
         int64_t v = f->val_int();
         if (v > common::TIANMU_BIGINT_MAX)
           v = common::TIANMU_BIGINT_MAX;
         else if (v < common::TIANMU_BIGINT_MIN)
           v = common::TIANMU_BIGINT_MIN;
-        *reinterpret_cast<int64_t *>( ptr) = v;
-        deltaRecord.field_head_[i] = sizeof(int64_t);
+        *reinterpret_cast<int64_t *>(ptr) = v;
+
         ptr += sizeof(int64_t);
       } break;
       case MYSQL_TYPE_BIT: {
@@ -1788,7 +1748,7 @@ void Engine::InsertDelayed(const std::string &table_path, int table_id, TABLE *t
 
   uint32_t buf_sz = 0;
   std::unique_ptr<char[]> buf;
-  EncodeInsertRecord(table_path, table_id, table->field, table->s->fields, table->s->blob_fields, buf, buf_sz);
+  EncodeInsertRecord(table_path, table_id, table->field, table->s->fields, table->s->blob_fields, buf, buf_sz, table->in_use);
 
   unsigned int failed = 0;
   while (true) {
@@ -1820,7 +1780,8 @@ void Engine::InsertToDelta(const std::string &table_path, std::shared_ptr<TableS
   // check & encode
   uint32_t buf_sz = 0;
   std::unique_ptr<char[]> buf;
-  EncodeInsertRecord(table_path, share->TabID(), table->field, table->s->fields, table->s->blob_fields, buf, buf_sz);
+  EncodeInsertRecord(table_path, share->TabID(), table->field, table->s->fields, table->s->blob_fields, buf, buf_sz,
+               table->in_use);
   // insert to delta
   tm_table->InsertToDelta(row_id, std::move(buf), buf_sz);
 }
