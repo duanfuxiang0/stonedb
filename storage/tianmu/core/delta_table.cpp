@@ -23,9 +23,6 @@
 
 namespace Tianmu {
 namespace core {
-
-/// DeltaTable
-
 DeltaTable::DeltaTable(const std::string &name, uint32_t delta_id, uint32_t cf_id)
     : fullname_(name), delta_tid_(delta_id), cf_handle_(ha_kvstore_->GetCfHandleByID(cf_id)) {
   ASSERT(cf_handle_, "column family handle not exist " + name);
@@ -179,6 +176,7 @@ void DeltaTable::Truncate(Transaction *tx) {
 
 DeltaIterator::DeltaIterator(DeltaTable *table, const std::vector<bool> &attrs) : table_(table), attrs_(attrs) {
   // get snapshot for rocksdb, snapshot will release when DeltaIterator is destructured
+  // get snapshot for rocksdb, snapshot will release when DeltaIterator is destructured
   auto snapshot = ha_kvstore_->GetRdbSnapshot();
   rocksdb::ReadOptions read_options(true, snapshot);
   it_ = std::unique_ptr<rocksdb::Iterator>(ha_kvstore_->GetRdb()->NewIterator(read_options, table_->GetCFHandle()));
@@ -188,14 +186,15 @@ DeltaIterator::DeltaIterator(DeltaTable *table, const std::vector<bool> &attrs) 
   index::be_store_index(entry_key + key_pos, table_id);
   key_pos += sizeof(uint32_t);
   rocksdb::Slice entry_slice((char *)entry_key, key_pos);
+  ;
   // ==== for debug ====
-//  it_->Seek(entry_slice);
-//  while (it_->Valid()) {
-//    auto row_id = GetCurrRowIdFromRecord();
-//    TIANMU_LOG(LogCtl_Level::DEBUG, " this table id: %d, row id: %d, type: %d, this record value: %s", table_id, row_id,
-//               static_cast<RecordType>(it_->value().data()[0]), it_->value());
-//    it_->Next();
-//  }
+  it_->Seek(entry_slice);
+  while (it_->Valid()) {
+    auto row_id = GetCurrRowIdFromRecord();
+    TIANMU_LOG(LogCtl_Level::DEBUG, " this table id: %d, row id: %d, type: %d, this record value: %s", table_id, row_id,
+               static_cast<RecordType>(it_->value().data()[0]), it_->value());
+    it_->Next();
+  }
   // ==== for debug ====
   it_->Seek(entry_slice);
   while (it_->Valid() && !IsCurrInsertType()) {
@@ -204,10 +203,87 @@ DeltaIterator::DeltaIterator(DeltaTable *table, const std::vector<bool> &attrs) 
   if (it_->Valid()) {
     position_ = GetCurrRowIdFromRecord();
     start_position_ = position_;
+    position_ = GetCurrRowIdFromRecord();
+    start_position_ = position_;
   } else {
     position_ = -1;
   }
 }
+
+DeltaIterator::DeltaIterator(DeltaIterator &&other) noexcept {
+  table_ = other.table_;
+  position_ = other.position_;
+  start_position_ = other.start_position_;
+  current_record_fetched_ = other.current_record_fetched_;
+  it_ = std::move(other.it_);
+  record_ = std::move(other.record_);
+  attrs_ = std::move(other.attrs_);
+}
+
+DeltaIterator &DeltaIterator::operator=(DeltaIterator &&other) noexcept {
+  table_ = other.table_;
+  position_ = other.position_;
+  start_position_ = other.start_position_;
+  current_record_fetched_ = other.current_record_fetched_;
+  it_ = std::move(other.it_);
+  record_ = std::move(other.record_);
+  attrs_ = std::move(other.attrs_);
+  return *this;
+}
+
+bool DeltaIterator::operator==(const DeltaIterator &other) {
+  return table_->GetDeltaTableID() == other.table_->GetDeltaTableID() && position_ == other.position_;
+}
+
+bool DeltaIterator::operator!=(const DeltaIterator &other) { return !(*this == other); }
+
+void DeltaIterator::operator++(int) {
+  it_->Next();
+  while (it_->Valid() && !IsCurrInsertType()) {
+    it_->Next();
+  }
+  if (it_->Valid()) {
+    DEBUG_ASSERT(IsCurrInsertType());
+    position_ = GetCurrRowIdFromRecord();
+  } else {
+    position_ = -1;
+  }
+  current_record_fetched_ = false;
+}
+
+std::string &DeltaIterator::GetData() {
+  record_ = it_->value().ToString();
+  current_record_fetched_ = true;
+  return record_;
+}
+
+void DeltaIterator::MoveTo(int64_t row_id) {
+  uchar key[12];
+  size_t key_pos = 0;
+  // table id
+  index::be_store_index(key + key_pos, table_->GetDeltaTableID());
+  key_pos += sizeof(uint32_t);
+  // row id
+  index::be_store_uint64(key + key_pos, row_id);
+  key_pos += sizeof(uint64_t);
+  it_->Seek({(char *)key, key_pos});
+  if (it_->Valid()) {  // need check valid
+    DEBUG_ASSERT(GetCurrRowIdFromRecord() == row_id);
+    position_ = GetCurrRowIdFromRecord();
+  } else {
+    position_ = -1;
+  }
+  current_record_fetched_ = false;
+}
+
+bool DeltaIterator::IsCurrInsertType() {
+  return static_cast<RecordType>(it_->value().data()[0]) == RecordType::kInsert;
+}
+
+uint64_t DeltaIterator::GetCurrRowIdFromRecord() {
+  return index::be_to_uint64(reinterpret_cast<const uchar *>(it_->key().data()) + sizeof(uint32_t));
+}
+
 
 DeltaIterator::DeltaIterator(DeltaIterator &&other) noexcept {
   table_ = other.table_;
