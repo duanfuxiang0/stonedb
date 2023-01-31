@@ -42,11 +42,10 @@
 namespace Tianmu {
 namespace core {
 
-static core::Value GetValueFromField(Field *f) {
-  core::Value v;
+void TianmuTable::GetValueFromField(Field *f, Value &v) {
 
   if (f->is_null())
-    return v;
+    return;
 
   switch (f->type()) {
     case MYSQL_TYPE_TINY:
@@ -131,7 +130,16 @@ static core::Value GetValueFromField(Field *f) {
     default:throw common::Exception("unsupported mysql type " + std::to_string(f->type()));
       break;
   }
-  return v;
+}
+
+void TianmuTable::UpdateGetOldNewValue(TABLE *table, uint64_t col_id, Value &old_v, Value &new_v) {
+  std::shared_ptr<uchar[]> buffer;
+  buffer.reset(new uchar[table->s->reclength]);
+  std::memcpy(buffer.get(), table->record[0], table->s->reclength);
+  GetValueFromField(table->field[col_id], new_v);
+  std::memcpy(table->record[0], table->record[1], table->s->reclength);
+  GetValueFromField(table->field[col_id], old_v);
+  std::memcpy(table->record[0], buffer.get(), table->s->reclength);
 }
 
 /// record parser utils
@@ -215,14 +223,7 @@ class DelayedInsertParser final {
       for (auto &vc : value_buffers) {
         vc.Commit();
       }
-
       processed++;
-      // insert index into kvstore
-      if (InsertIndex(value_buffers, start_row) != common::ErrorCode::SUCCESS) {
-        for (auto &vc : value_buffers) {
-          vc.Rollback();
-        }
-      }
     }
     return no_of_rows_returned;
   }
@@ -319,8 +320,6 @@ class DelayedUpdateParser final {
     return update_row_num;
   }
 
-  // todo(dfx): update need update primary key;
-  //  common::ErrorCode UpdateIndex();
 
  private:
   std::vector<std::unique_ptr<TianmuAttr>> &attrs;
@@ -972,24 +971,27 @@ int TianmuTable::Update(TABLE *table, uint64_t row_id, const uchar *old_data, uc
       continue;
     }
     auto field = table->field[col_id];
+
     if (field->real_maybe_null()) {
       if (field->is_null_in_record(old_data) && field->is_null_in_record(new_data)) {
         continue;
       }
 
       if (field->is_null_in_record(new_data)) {
-        core::Value null;
-        res.insert(ha_tianmu_engine_->delete_or_update_thread_pool.add_task(&core::TianmuTable::UpdateItem, this,
-                                                                            row_id, col_id, null, current_txn_));
+        core::Value old_v, new_v;
+        UpdateGetOldNewValue(table, col_id, old_v, new_v);
+        res.insert(ha_tianmu_engine_->delete_or_update_thread_pool.add_task(
+            &core::TianmuTable::UpdateItem, this, row_id, col_id, old_v, new_v, current_txn_));
         continue;
       }
     }
     auto o_ptr = field->ptr - table->record[0] + old_data;
     auto n_ptr = field->ptr - table->record[0] + new_data;
     if (field->is_null_in_record(old_data) || std::memcmp(o_ptr, n_ptr, field->pack_length()) != 0) {
-      core::Value val = GetValueFromField(field);
+      core::Value old_v, new_v;
+      UpdateGetOldNewValue(table, col_id, old_v, new_v);
       res.insert(ha_tianmu_engine_->delete_or_update_thread_pool.add_task(&core::TianmuTable::UpdateItem, this, row_id,
-                                                                          col_id, val, current_txn_));
+                                                                          col_id, old_v, new_v, current_txn_));
     }
   }
   res.get_all_with_except();
@@ -1006,9 +1008,10 @@ int TianmuTable::Delete(TABLE *table, uint64_t row_id) {
   return 0;
 }
 
-void TianmuTable::UpdateItem(uint64_t row, uint64_t col, Value v, core::Transaction *current_transaction) {
+void TianmuTable::UpdateItem(uint64_t row, uint64_t col, Value &old_v, Value &new_v,
+                             core::Transaction *current_transaction) {
   current_txn_ = current_transaction;
-  m_attrs[col]->UpdateData(row, v);
+  m_attrs[col]->UpdateData(row, old_v, new_v);
 }
 
 void TianmuTable::DeleteItem(uint64_t row, uint64_t col, core::Transaction *current_transaction) {
@@ -1440,8 +1443,7 @@ uint64_t TianmuTable::ProcessDelayed(system::IOParameters &iop) {
   return no_loaded_rows;
 }
 
-void TianmuTable::InsertToDelta(std::unique_ptr<char[]> buf, uint32_t size) {
-  uint64_t row_id = NextRowId();
+void TianmuTable::InsertToDelta(uint64_t row_id, std::unique_ptr<char[]> buf, uint32_t size) {
   return m_delta->AddInsertRecord(current_txn_, row_id, std::move(buf), size);
 }
 
@@ -1451,6 +1453,58 @@ void TianmuTable::UpdateToDelta(uint64_t row_id, std::unique_ptr<char[]> buf, ui
 
 void TianmuTable::DeleteToDelta(uint64_t row_id, std::unique_ptr<char[]> buf, uint32_t size) {
   return m_delta->AddRecord(current_txn_, row_id, std::move(buf), size);
+}
+
+void TianmuTable::InsertIndexForDelta(TABLE *table, uint64_t row_id) {
+  std::shared_ptr<index::TianmuTableIndex> tab = ha_tianmu_engine_->GetTableIndex(share->Path());
+  if (tab) {
+    std::vector<std::string> fields;
+    std::vector<uint> cols = tab->KeyCols();
+    std::vector<loader::ValueCache> vcs;
+    vcs.reserve(cols.size());
+    int i=0;
+    for (auto &col : cols) {
+      vcs.emplace_back(1, 128);
+      Field2VC(table->field[col], vcs[i], col);
+      vcs[i].Commit();
+      fields.emplace_back(vcs[i].GetDataBytesPointer(0), vcs[i].Size(0));
+      i++;
+    }
+
+    if (tab->InsertIndex(current_txn_, fields, row_id) == common::ErrorCode::DUPP_KEY) {
+      TIANMU_LOG(LogCtl_Level::INFO, "Insert duplicate key on row %d", row_id);
+      throw common::DupKeyException("Insert duplicate key on row " + std::to_string(row_id));
+    }
+  }
+}
+
+void TianmuTable::UpdateIndexForDelta(TABLE *table, uint64_t row_id, uint64_t col) {
+  core::Value old_v, new_v;
+  UpdateGetOldNewValue(table, col, old_v, new_v);
+  m_attrs[col]->UpdateIfIndex(current_txn_, row_id, col, old_v, new_v);
+}
+
+void TianmuTable::DeleteIndexForDelta(TABLE *table, uint64_t row_id) {
+  std::shared_ptr<index::TianmuTableIndex> tab = ha_tianmu_engine_->GetTableIndex(share->Path());
+  if (tab) {
+    std::vector<std::string> fields;
+    std::vector<uint> cols = tab->KeyCols();
+    std::vector<loader::ValueCache> vcs;
+    vcs.reserve(cols.size());
+    int i=0;
+    for (auto &col : cols) {
+      vcs.emplace_back(1, 128);
+      Field2VC(table->field[col], vcs[i], col);
+      vcs[i].Commit();
+      fields.emplace_back(vcs[i].GetDataBytesPointer(0), vcs[i].Size(0));
+      i++;
+    }
+
+    if (tab->DeleteIndex(current_txn_, fields, row_id) == common::ErrorCode::FAILED) {
+      TIANMU_LOG(LogCtl_Level::DEBUG, "Delete row: %s for primary key field", row_id);
+      throw common::Exception("Delete row: " + std::to_string(row_id) + " for primary key field");
+    }
+  }
 }
 
 uint64_t TianmuTable::MergeDeltaTable(system::IOParameters &iop) {
