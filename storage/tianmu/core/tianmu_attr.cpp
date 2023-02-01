@@ -887,11 +887,8 @@ void TianmuAttr::LoadData(loader::ValueCache *nvs, Transaction *conn_info) {
   hdr.natural_size += nvs->SumarizedSize();
   hdr.numOfDeleted += nvs->NumOfDeletes();
   TIANMU_LOG(LogCtl_Level::INFO,
-             "DELTA INSERT load_data_task tid: %d, cid: %d, pack index: %d, pack size: %d, write batch size: %d",
-             m_tid,
-             m_cid,
-             pi,
-             (hdr.numOfRecords - pi * 65536), nvs->NumOfValues());
+             "DELTA INSERT load_data_task tid: %d, cid: %d, pack index: %d, pack size: %d, write batch size: %d", m_tid,
+             m_cid, pi, (hdr.numOfRecords - pi * 65536), nvs->NumOfValues());
 }
 
 void TianmuAttr::LoadDataPackN(size_t pi, loader::ValueCache *nvs) {
@@ -982,6 +979,7 @@ void TianmuAttr::LoadDataPackS(size_t pi, loader::ValueCache *nvs) {
   auto cnt = nvs->NumOfValues();
 
   // no need to store any values - uniform package
+  if (load_nulls == cnt && nvs->NumOfDeletes() == 0 && (dpn.numOfRecords == 0 || dpn.NullOnly())) {
   if (load_nulls == cnt && nvs->NumOfDeletes() == 0 && (dpn.numOfRecords == 0 || dpn.NullOnly())) {
     dpn.numOfRecords += cnt;
     dpn.numOfNulls += cnt;
@@ -1099,11 +1097,8 @@ void TianmuAttr::UpdateBatchData(core::Transaction *tx, const std::unordered_map
     hdr.numOfNulls += dpn.numOfNulls;
     ResetMaxMin(dpn);
     TIANMU_LOG(LogCtl_Level::INFO,
-               "DELTA UPDATE batch_update_task tid: %d, cid: %d, pack index: %d, write batch size: %d",
-               m_tid,
-               m_cid,
-               pn,
-               pack.second.size());
+               "DELTA UPDATE batch_update_task tid: %d, cid: %d, pack index: %d, write batch size: %d", m_tid, m_cid,
+               pn, pack.second.size());
   }
 }
 
@@ -1184,11 +1179,8 @@ void TianmuAttr::DeleteBatchData(core::Transaction *tx, const std::vector<uint64
     hdr.numOfNulls += dpn.numOfDeleted;
     ResetMaxMin(dpn);
     TIANMU_LOG(LogCtl_Level::INFO,
-               "DELTA DELETE batch_delete_task tid: %d, cid: %d, pack index: %d, write batch size: %d",
-               m_tid,
-               m_cid,
-               pn,
-               pack.second.size());
+               "DELTA DELETE batch_delete_task tid: %d, cid: %d, pack index: %d, write batch size: %d", m_tid, m_cid,
+               pn, pack.second.size());
   }
 }
 
@@ -1449,8 +1441,8 @@ std::shared_ptr<RSIndex_Bloom> TianmuAttr::GetFilter_Bloom() {
       FilterCoordinate(m_tid, m_cid, (int) FilterType::BLOOM, m_version.v1, m_version.v2), filter_creator));
 }
 
-void TianmuAttr::UpdateIfIndex(core::Transaction *tx, uint64_t row, uint64_t col, const Value &old_v, 
-                              const Value &new_v) {
+void TianmuAttr::UpdateIfIndex(core::Transaction *tx, uint64_t row, uint64_t col, const Value &old_v,
+                               const Value &new_v) {
   if (tx == nullptr) {
     tx = current_txn_;
   }
@@ -1501,7 +1493,7 @@ void TianmuAttr::DeleteByPrimaryKey(core::Transaction *tx, uint64_t row, uint64_
 
   if (GetPackType() == common::PackType::STR) {
     auto currentValue = GetValueString(row);
-    std::vector<std::string> fields {currentValue.ToString()};
+    std::vector<std::string> fields{currentValue.ToString()};
     common::ErrorCode returnCode = tab->DeleteIndex(current_txn_, fields, row);
     if (returnCode == common::ErrorCode::FAILED) {
       TIANMU_LOG(LogCtl_Level::DEBUG, "Delete: %s for primary key", currentValue.GetDataBytesPointer());
@@ -1510,7 +1502,7 @@ void TianmuAttr::DeleteByPrimaryKey(core::Transaction *tx, uint64_t row, uint64_
   } else {  // common::PackType::INT
     auto currentValue = GetValueInt64(row);
     std::string currentRowKey(reinterpret_cast<const char *>(&currentValue), sizeof(int64_t));
-    std::vector<std::string> fields {currentRowKey};
+    std::vector<std::string> fields{currentRowKey};
     common::ErrorCode returnCode = tab->DeleteIndex(current_txn_, fields, row);
     if (returnCode == common::ErrorCode::FAILED) {
       TIANMU_LOG(LogCtl_Level::DEBUG, "Delete: %" PRId64 " for primary key", currentValue);

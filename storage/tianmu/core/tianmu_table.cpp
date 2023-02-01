@@ -320,7 +320,6 @@ class DelayedUpdateParser final {
     return update_row_num;
   }
 
-
  private:
   std::vector<std::unique_ptr<TianmuAttr>> &attrs;
   std::map<uint64_t, std::unique_ptr<char[]>> *update_rows;
@@ -1462,7 +1461,7 @@ void TianmuTable::InsertIndexForDelta(TABLE *table, uint64_t row_id) {
     std::vector<uint> cols = tab->KeyCols();
     std::vector<loader::ValueCache> vcs;
     vcs.reserve(cols.size());
-    int i=0;
+    int i = 0;
     for (auto &col : cols) {
       vcs.emplace_back(1, 128);
       Field2VC(table->field[col], vcs[i], col);
@@ -1491,7 +1490,7 @@ void TianmuTable::DeleteIndexForDelta(TABLE *table, uint64_t row_id) {
     std::vector<uint> cols = tab->KeyCols();
     std::vector<loader::ValueCache> vcs;
     vcs.reserve(cols.size());
-    int i=0;
+    int i = 0;
     for (auto &col : cols) {
       vcs.emplace_back(1, 128);
       Field2VC(table->field[col], vcs[i], col);
