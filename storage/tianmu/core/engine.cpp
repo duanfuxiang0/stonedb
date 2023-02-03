@@ -408,27 +408,27 @@ void Engine::EncodeInsertRecord(const std::string &table_path, int table_id, Fie
 
   for (uint i = 0; i < col; i++) {
     Field *f = field[i];
+    {  // resize
+      size_t length;
+      if (f->flags & BLOB_FLAG)
+        length = dynamic_cast<Field_blob *>(f)->get_length();
+      else
+        length = f->row_pack_length();
+      length += 8;
+      size_t used = ptr - buf.get();
+      if (size - used < length) {
+        while (size - used < length) {
+          size *= 2;
+          if (size > utils::MappedCircularBuffer::MAX_BUF_SIZE)
+            throw common::Exception(table_path + " INSERT data exceeds max buffer size " +
+                                    std::to_string(utils::MappedCircularBuffer::MAX_BUF_SIZE));
+        }
 
-    size_t length;
-    if (f->flags & BLOB_FLAG)
-      length = dynamic_cast<Field_blob *>(f)->get_length();
-    else
-      length = f->row_pack_length();
-    length += 8;
-    size_t used = ptr - buf.get();
-    // resize
-    if (size - used < length) {
-      while (size - used < length) {
-        size *= 2;
-        if (size > utils::MappedCircularBuffer::MAX_BUF_SIZE)
-          throw common::Exception(table_path + " INSERT data exceeds max buffer size " +
-              std::to_string(utils::MappedCircularBuffer::MAX_BUF_SIZE));
+        std::unique_ptr<char[]> old_buf = std::move(buf);
+        buf.reset(new char[size]);
+        std::memcpy(buf.get(), old_buf.get(), used);
+        ptr = buf.get() + used;
       }
-
-      std::unique_ptr<char[]> old_buf = std::move(buf);
-      buf.reset(new char[size]);
-      std::memcpy(buf.get(), old_buf.get(), used);
-      ptr = buf.get() + used;
     }
 
     if (f->is_null()) {
@@ -533,8 +533,11 @@ void Engine::EncodeInsertRecord(const std::string &table_path, int table_id, Fie
         std::memcpy(ptr, str.ptr(), str.length());
         ptr += str.length();
         deltaRecord.field_head_[i] = sizeof(uint32_t) + str.length();
-      }
-        break;
+        // for debug
+        if (deltaRecord.field_head_[i] > 10000) {
+          TIANMU_LOG(LogCtl_Level::DEBUG, "str_size error: %d", deltaRecord.field_head_[i]);
+        }
+      } break;
       case MYSQL_TYPE_SET:
       case MYSQL_TYPE_ENUM:
       case MYSQL_TYPE_GEOMETRY:
@@ -559,7 +562,7 @@ void Engine::DecodeInsertRecord(const char *ptr, size_t size, Field **fields) {
       field->set_null();
       continue;
     }
-    auto length = deltaRecord.field_head_[i];
+    //    auto length = deltaRecord.field_head_[i];
     switch (field->type()) {
       case MYSQL_TYPE_TINY:
       case MYSQL_TYPE_SHORT:
@@ -655,9 +658,10 @@ void Engine::EncodeUpdateRecord(const std::string &table_path, int table_id,
   ptr = deltaRecord.record_encode(ptr);
 
   // fields...
-  for (uint col_id = 0; col_id < field_count; col_id++) {
-    if (update_fields.find(col_id) == update_fields.end()) {
-      deltaRecord.field_head_[col_id] = 0;
+  for (uint i = 0; i < field_count; i++) {
+    // field not update
+    if (update_fields.find(i) == update_fields.end()) {
+      deltaRecord.field_head_[i] = 0;
       continue;
     }
     Field *f = update_fields[col_id];
@@ -666,27 +670,27 @@ void Engine::EncodeUpdateRecord(const std::string &table_path, int table_id,
       deltaRecord.field_head_[col_id] = 0;
       continue;
     }
-    deltaRecord.update_mask_.set(col_id);
-    // resize
-    size_t length;
-    if (f->flags & BLOB_FLAG)
-      length = dynamic_cast<Field_blob *>(f)->get_length();
-    else
-      length = f->row_pack_length();
-    length += 8;
-    size_t used = ptr - buf.get();
-    // resize
-    if (buf_size - used < length) {
-      while (buf_size - used < length) {
-        buf_size *= 2;
-        if (buf_size > utils::MappedCircularBuffer::MAX_BUF_SIZE)
-          throw common::Exception(table_path + " INSERT data exceeds max buffer size " +
-              std::to_string(utils::MappedCircularBuffer::MAX_BUF_SIZE));
+    deltaRecord.update_mask_.set(i);
+    {  // resize
+      size_t length;
+      if (f->flags & BLOB_FLAG)
+        length = dynamic_cast<Field_blob *>(f)->get_length();
+      else
+        length = f->row_pack_length();
+      length += 8;
+      size_t used = ptr - buf.get();
+      if (buf_size - used < length) {
+        while (buf_size - used < length) {
+          buf_size *= 2;
+          if (buf_size > utils::MappedCircularBuffer::MAX_BUF_SIZE)
+            throw common::Exception(table_path + " Update data exceeds max buffer size " +
+                                    std::to_string(utils::MappedCircularBuffer::MAX_BUF_SIZE));
+        }
+        std::unique_ptr<char[]> old_buf = std::move(buf);
+        buf.reset(new char[buf_size]);
+        std::memcpy(buf.get(), old_buf.get(), used);
+        ptr = buf.get() + used;
       }
-      std::unique_ptr<char[]> old_buf = std::move(buf);
-      buf.reset(new char[buf_size]);
-      std::memcpy(buf.get(), old_buf.get(), used);
-      ptr = buf.get() + used;
     }
     switch (f->type()) {
       case MYSQL_TYPE_TINY: {
@@ -817,9 +821,12 @@ void Engine::EncodeUpdateRecord(const std::string &table_path, int table_id,
         ptr += sizeof(uint32_t);
         std::memcpy(ptr, str.ptr(), str.length());
         ptr += str.length();
-        deltaRecord.field_head_[col_id] = sizeof(uint32_t) + str.length();
-      }
-        break;
+        deltaRecord.field_head_[i] = sizeof(uint32_t) + str.length();
+        // for debug
+        if (deltaRecord.field_head_[i] > 10000) {
+          TIANMU_LOG(LogCtl_Level::DEBUG, "str_size error: %d", deltaRecord.field_head_[i]);
+        }
+      } break;
       case MYSQL_TYPE_SET:
       case MYSQL_TYPE_ENUM:
       case MYSQL_TYPE_GEOMETRY:
@@ -1749,7 +1756,8 @@ void Engine::InsertDelayed(const std::string &table_path, int table_id, TABLE *t
 
   uint32_t buf_sz = 0;
   std::unique_ptr<char[]> buf;
-  EncodeInsertRecord(table_path, table_id, table->field, table->s->fields, table->s->blob_fields, buf, buf_sz, table->in_use);
+  EncodeInsertRecord(table_path, table_id, table->field, table->s->fields, table->s->blob_fields, buf, buf_sz,
+                     table->in_use);
 
   unsigned int failed = 0;
   while (true) {
@@ -1782,7 +1790,7 @@ void Engine::InsertToDelta(const std::string &table_path, std::shared_ptr<TableS
   uint32_t buf_sz = 0;
   std::unique_ptr<char[]> buf;
   EncodeInsertRecord(table_path, share->TabID(), table->field, table->s->fields, table->s->blob_fields, buf, buf_sz,
-               table->in_use);
+                     table->in_use);
   // insert to delta
   tm_table->InsertToDelta(row_id, std::move(buf), buf_sz);
 }
@@ -1834,7 +1842,8 @@ void Engine::UpdateToDelta(const std::string &table_path, std::shared_ptr<TableS
 
   uint32_t buf_sz = 0;
   std::unique_ptr<char[]> buf;
-  EncodeUpdateRecord(table_path, share->TabID(), update_fields, table->s->fields, table->s->blob_fields, buf, buf_sz);
+  EncodeUpdateRecord(table_path, share->TabID(), update_fields, table->s->fields, table->s->blob_fields, buf, buf_sz,
+                     table->in_use);
 
   tm_table->UpdateToDelta(row_id, std::move(buf), buf_sz);
 }

@@ -18,11 +18,15 @@
 #include "core/delta_table.h"
 #include "core/table_share.h"
 #include "core/transaction.h"
+#include "delta_table.h"
 #include "index/kv_transaction.h"
 #include "index/rdb_meta_manager.h"
 
 namespace Tianmu {
 namespace core {
+
+/// DeltaTable
+
 DeltaTable::DeltaTable(const std::string &name, uint32_t delta_id, uint32_t cf_id)
     : fullname_(name), delta_tid_(delta_id), cf_handle_(ha_kvstore_->GetCfHandleByID(cf_id)) {
   ASSERT(cf_handle_, "column family handle not exist " + name);
@@ -33,7 +37,7 @@ std::shared_ptr<DeltaTable> DeltaTable::CreateDeltaTable(const std::shared_ptr<T
   std::string table_name = share->Path();
   std::string normalized_name;
   if (!index::NormalizeName(table_name, normalized_name)) {
-    throw common::Exception("Normalized rowstore name failed " + table_name);
+    throw common::Exception("Normalized Delta Store name failed " + table_name);
     return nullptr;
   }
   std::shared_ptr<DeltaTable> delta = ha_kvstore_->FindDeltaTable(normalized_name);
@@ -41,15 +45,15 @@ std::shared_ptr<DeltaTable> DeltaTable::CreateDeltaTable(const std::shared_ptr<T
     return delta;
 
   if (cf_prefix == index::DEFAULT_SYSTEM_CF_NAME)
-    throw common::Exception("Insert rowstore name should not be " + index::DEFAULT_SYSTEM_CF_NAME);
+    throw common::Exception("Insert Delta Store name should not be " + index::DEFAULT_SYSTEM_CF_NAME);
   std::string cf_name =
       cf_prefix.empty() ? index::DEFAULT_ROWSTORE_NAME : index::DEFAULT_DELTA_STORE_PREFIX + cf_prefix;
   uint32_t cf_id = ha_kvstore_->GetCfHandle(cf_name)->GetID();
   uint32_t delta_id = ha_kvstore_->GetNextIndexId();
   delta = std::make_shared<DeltaTable>(normalized_name, delta_id, cf_id);
   ha_kvstore_->KVWriteDeltaMeta(delta);
-  TIANMU_LOG(LogCtl_Level::INFO, "Create RowStore: %s, CF ID: %d, RowStore ID: %u", normalized_name.c_str(), cf_id,
-             delta_id);
+  TIANMU_LOG(LogCtl_Level::INFO, "Create Delta Store: %s, CF ID: %d, Delta Store ID: %u", normalized_name.c_str(),
+             cf_id, delta_id);
 
   return delta;
 }
@@ -66,6 +70,24 @@ common::ErrorCode DeltaTable::Rename(const std::string &to) {
   ha_kvstore_->KVRenameDeltaMeta(fullname_, dname);
   fullname_ = dname;
   return common::ErrorCode::SUCCESS;
+}
+
+void DeltaTable::FillRowByRowid(Transaction *tx, TABLE *table, int64_t obj) {
+  uchar key[sizeof(uint32_t) + sizeof(uint64_t)];
+  size_t key_pos = 0;
+  index::KVTransaction &kv_trans = tx->KVTrans();
+  // table id
+  index::be_store_index(key + key_pos, delta_tid_);
+  key_pos += sizeof(uint32_t);
+  // row id
+  index::be_store_uint64(key + key_pos, obj);
+  key_pos += sizeof(uint64_t);
+  std::string delta_record;
+  rocksdb::Status status = kv_trans.GetData(cf_handle_, {(char *)key, key_pos}, &delta_record);
+  if (!status.ok()) {
+    throw common::Exception("Error, kv_trans.GetData failed, key: %s" + std::string((char *)key, key_pos));
+  }
+  core::Engine::DecodeInsertRecordToField(delta_record.data(), table->field);
 }
 
 common::ErrorCode DeltaTable::DropDeltaTable(const std::string &table_name) {
@@ -87,7 +109,7 @@ void DeltaTable::Init(uint64_t base_row_num) {
   index::KVTransaction kv_trans;
   uchar entry_key[sizeof(uint32_t)];
   index::be_store_index(entry_key, delta_tid_);
-  rocksdb::Slice prefix((char *) entry_key, sizeof(uint32_t));
+  rocksdb::Slice prefix((char *)entry_key, sizeof(uint32_t));
   rocksdb::ReadOptions read_options;
   read_options.total_order_seek = true;
   std::unique_ptr<rocksdb::Iterator> iter(kv_trans.GetDataIterator(read_options, cf_handle_));
@@ -97,17 +119,17 @@ void DeltaTable::Init(uint64_t base_row_num) {
     // row_id
     auto type = *reinterpret_cast<RecordType *>(const_cast<char *>(iter->value().data()));
     if (type == RecordType::kInsert) {
-      row_id++;
+      row_id.fetch_add(1);
     }
     // load_id
     uint32_t load_num = *reinterpret_cast<uint32_t *>(const_cast<char *>(iter->value().data()) + sizeof(RecordType));
-    load_id += load_num;
+    load_id.fetch_add(load_num);
     iter->Next();
   }
 }
 
 void DeltaTable::AddInsertRecord(Transaction *tx, uint64_t row_id, std::unique_ptr<char[]> buf, uint32_t size) {
-  uchar key[12];
+  uchar key[sizeof(uint32_t) + sizeof(uint64_t)];
   size_t key_pos = 0;
   index::KVTransaction &kv_trans = tx->KVTrans();
   // table id
@@ -117,9 +139,17 @@ void DeltaTable::AddInsertRecord(Transaction *tx, uint64_t row_id, std::unique_p
   index::be_store_uint64(key + key_pos, row_id);
   key_pos += sizeof(uint64_t);
 
-  rocksdb::Status status = kv_trans.PutData(cf_handle_, {(char *) key, key_pos}, {buf.get(), size});
+  rocksdb::Status status = kv_trans.PutData(cf_handle_, {(char *)key, key_pos}, {buf.get(), size});
   if (!status.ok()) {
-    throw common::Exception("Error,kv_trans.PutData failed,date size: " + std::to_string(size) + " date:" + std::string(buf.get()));
+    throw common::Exception("Error,kv_trans.PutData failed,date size: " + std::to_string(size) +
+                            " date:" + std::string(buf.get()));
+  }
+  tx->AddInsertRowNum();
+  if (tx->GetInsertRowNum() >= tianmu_sysvar_insert_write_batch_size) {
+    kv_trans.Commit();
+    kv_trans.ResetWriteBatch();
+    kv_trans.Acquiresnapshot();
+    tx->ResetInsertRowNum();
   }
   load_id++;
   stat.write_cnt++;
@@ -127,7 +157,7 @@ void DeltaTable::AddInsertRecord(Transaction *tx, uint64_t row_id, std::unique_p
 }
 
 void DeltaTable::AddRecord(Transaction *tx, uint64_t row_id, std::unique_ptr<char[]> buf, uint32_t size) {
-  uchar key[12];
+  uchar key[sizeof(uint32_t) + sizeof(uint64_t)];
   size_t key_pos = 0;
   index::KVTransaction &kv_trans = tx->KVTrans();
   // table id
@@ -137,9 +167,10 @@ void DeltaTable::AddRecord(Transaction *tx, uint64_t row_id, std::unique_ptr<cha
   index::be_store_uint64(key + key_pos, row_id);
   key_pos += sizeof(uint64_t);
 
-  rocksdb::Status status = kv_trans.MergeData(cf_handle_, {(char *) key, key_pos}, {buf.get(), size});
+  rocksdb::Status status = kv_trans.MergeData(cf_handle_, {(char *)key, key_pos}, {buf.get(), size});
   if (!status.ok()) {
-    throw common::Exception("Error,kv_trans.PutData failed,date size: " + std::to_string(size) + " date:" + std::string(buf.get()));
+    throw common::Exception("Error,kv_trans.PutData failed,date size: " + std::to_string(size) +
+                            " date:" + std::string(buf.get()));
   }
   load_id++;
   stat.write_cnt++;
@@ -149,11 +180,11 @@ void DeltaTable::AddRecord(Transaction *tx, uint64_t row_id, std::unique_ptr<cha
 void DeltaTable::Truncate(Transaction *tx) {
   ASSERT(tx, "No truncate transaction.");
   // todo(dfx): just use DropColumnFamily() and CreateColumnFamily(), maybe faster
-  uchar entry_key[12];
+  uchar entry_key[sizeof(uint32_t) + sizeof(uint64_t)];
   size_t key_pos = 0;
   index::be_store_index(entry_key + key_pos, delta_tid_);
   key_pos += sizeof(uint32_t);
-  rocksdb::Slice entry_slice((char *) entry_key, key_pos);
+  rocksdb::Slice entry_slice((char *)entry_key, key_pos);
   rocksdb::ReadOptions ropts;
   std::unique_ptr<rocksdb::Iterator> iter(tx->KVTrans().GetDataIterator(ropts, cf_handle_));
   iter->Seek(entry_slice);
@@ -172,64 +203,52 @@ void DeltaTable::Truncate(Transaction *tx) {
   return;
 }
 
+bool DeltaTable::BaseRowIsDeleted(Transaction *tx, uint64_t row_id) const {
+  uchar key[sizeof(uint32_t) + sizeof(uint64_t)];
+  size_t key_pos = 0;
+  index::KVTransaction &kv_trans = tx->KVTrans();
+  // table id
+  index::be_store_index(key + key_pos, delta_tid_);
+  key_pos += sizeof(uint32_t);
+  // row id
+  index::be_store_uint64(key + key_pos, row_id);
+  key_pos += sizeof(uint64_t);
+  std::string delta_record;
+  rocksdb::Status status = kv_trans.GetData(cf_handle_, {(char *)key, key_pos}, &delta_record);
+  if (status.IsBusy() && !status.IsDeadlock()) {
+    kv_trans.Releasesnapshot();
+    kv_trans.Acquiresnapshot();
+    status = kv_trans.GetData(cf_handle_, {(char *)key, key_pos}, &delta_record);
+  }
+  if (status.IsNotFound() || delta_record.empty()) {
+    return false;
+  } else if (status.ok()) {
+    if (DeltaRecordHead::GetRecordType(delta_record.data()) == RecordType::kDelete) {
+      return true;
+    }
+  }
+  return false;
+}
 /// DeltaIterator
 
 DeltaIterator::DeltaIterator(DeltaTable *table, const std::vector<bool> &attrs) : table_(table), attrs_(attrs) {
-  // get snapshot for rocksdb, snapshot will release when DeltaIterator is destructured
   // get snapshot for rocksdb, snapshot will release when DeltaIterator is destructured
   auto snapshot = ha_kvstore_->GetRdbSnapshot();
   rocksdb::ReadOptions read_options;
   read_options.total_order_seek = true;
   read_options.snapshot = snapshot;
   it_ = std::unique_ptr<rocksdb::Iterator>(ha_kvstore_->GetRdb()->NewIterator(read_options, table_->GetCFHandle()));
-  uchar entry_key[12];
-  size_t key_pos = 0;
+  uchar entry_key[sizeof(uint32_t)];
   uint32_t table_id = table_->GetDeltaTableID();
-  index::be_store_index(entry_key + key_pos, table_id);
-  key_pos += sizeof(uint32_t);
-  prefix_ = rocksdb::Slice((char *) entry_key, key_pos);
-  // ==== for debug ====
-//  it_->Seek(entry_slice);
-//  while (it_->Valid()) {
-//    auto row_id = GetCurrRowIdFromRecord();
-//    TIANMU_LOG(LogCtl_Level::DEBUG, " this table id: %d, row id: %d, type: %d, this record value: %s", table_id, row_id,
-//               static_cast<RecordType>(it_->value().data()[0]), it_->value());
-//    it_->Next();
-//  }
-  // ==== for debug ====
-  it_->Seek(prefix_);
-  while (RdbKeyValid() && !IsInsertType()) {
-    it_->Next();
-  }
+  index::be_store_index(entry_key, table_id);
+  rocksdb::Slice prefix = rocksdb::Slice((char *)entry_key, sizeof(uint32_t));
+  it_->Seek(prefix);
   if (RdbKeyValid()) {
     position_ = CurrentRowId();
-    start_position_ = position_;
-    position_ = GetCurrRowIdFromRecord();
     start_position_ = position_;
   } else {
     position_ = -1;
   }
-}
-
-DeltaIterator::DeltaIterator(DeltaIterator &&other) noexcept {
-  table_ = other.table_;
-  position_ = other.position_;
-  start_position_ = other.start_position_;
-  current_record_fetched_ = other.current_record_fetched_;
-  it_ = std::move(other.it_);
-  record_ = std::move(other.record_);
-  attrs_ = std::move(other.attrs_);
-}
-
-DeltaIterator &DeltaIterator::operator=(DeltaIterator &&other) noexcept {
-  table_ = other.table_;
-  position_ = other.position_;
-  start_position_ = other.start_position_;
-  current_record_fetched_ = other.current_record_fetched_;
-  it_ = std::move(other.it_);
-  record_ = std::move(other.record_);
-  attrs_ = std::move(other.attrs_);
-  return *this;
 }
 
 bool DeltaIterator::operator==(const DeltaIterator &other) {
@@ -238,11 +257,8 @@ bool DeltaIterator::operator==(const DeltaIterator &other) {
 
 bool DeltaIterator::operator!=(const DeltaIterator &other) { return !(*this == other); }
 
-void DeltaIterator::operator++(int) {
+void DeltaIterator::Next() {
   it_->Next();
-  while (RdbKeyValid() && !IsInsertType()) {
-    it_->Next();
-  }
   if (RdbKeyValid()) {
     position_ = CurrentRowId();
   } else {
@@ -257,8 +273,8 @@ std::string &DeltaIterator::GetData() {
   return record_;
 }
 
-void DeltaIterator::MoveTo(int64_t row_id) {
-  uchar key[12];
+void DeltaIterator::SeekTo(int64_t row_id) {
+  uchar key[sizeof(uint32_t) + sizeof(uint64_t)];
   size_t key_pos = 0;
   // table id
   index::be_store_index(key + key_pos, table_->GetDeltaTableID());
@@ -266,83 +282,9 @@ void DeltaIterator::MoveTo(int64_t row_id) {
   // row id
   index::be_store_uint64(key + key_pos, row_id);
   key_pos += sizeof(uint64_t);
-  it_->Seek({(char *)key, key_pos});
-  if (it_->Valid()) {  // need check valid
-    DEBUG_ASSERT(GetCurrRowIdFromRecord() == row_id);
-    position_ = GetCurrRowIdFromRecord();
-  } else {
-    position_ = -1;
-  }
-  current_record_fetched_ = false;
-}
-
-bool DeltaIterator::IsCurrInsertType() {
-  return static_cast<RecordType>(it_->value().data()[0]) == RecordType::kInsert;
-}
-
-uint64_t DeltaIterator::GetCurrRowIdFromRecord() {
-  return index::be_to_uint64(reinterpret_cast<const uchar *>(it_->key().data()) + sizeof(uint32_t));
-}
-
-
-DeltaIterator::DeltaIterator(DeltaIterator &&other) noexcept {
-  table_ = other.table_;
-  position_ = other.position_;
-  start_position_ = other.start_position_;
-  current_record_fetched_ = other.current_record_fetched_;
-  it_ = std::move(other.it_);
-  record_ = std::move(other.record_);
-  attrs_ = std::move(other.attrs_);
-}
-
-DeltaIterator &DeltaIterator::operator=(DeltaIterator &&other) noexcept {
-  table_ = other.table_;
-  position_ = other.position_;
-  start_position_ = other.start_position_;
-  current_record_fetched_ = other.current_record_fetched_;
-  it_ = std::move(other.it_);
-  record_ = std::move(other.record_);
-  attrs_ = std::move(other.attrs_);
-  return *this;
-}
-
-bool DeltaIterator::operator==(const DeltaIterator &other) {
-  return table_->GetDeltaTableID() == other.table_->GetDeltaTableID() && position_ == other.position_;
-}
-
-bool DeltaIterator::operator!=(const DeltaIterator &other) { return !(*this == other); }
-
-void DeltaIterator::operator++(int) {
-  it_->Next();
-  while (it_->Valid() && !IsCurrInsertType()) {
-    it_->Next();
-  }
-  if (it_->Valid()) {
-    DEBUG_ASSERT(IsCurrInsertType());
-    position_ = GetCurrRowIdFromRecord();
-  } else {
-    position_ = -1;
-  }
-  current_record_fetched_ = false;
-}
-
-std::string &DeltaIterator::GetData() {
-  record_ = it_->value().ToString();
-  current_record_fetched_ = true;
-  return record_;
-}
-
-void DeltaIterator::MoveTo(int64_t row_id) {
-  uchar key[12];
-  size_t key_pos = 0;
-  // table id
-  index::be_store_index(key + key_pos, table_->GetDeltaTableID());
-  key_pos += sizeof(uint32_t);
-  // row id
-  index::be_store_uint64(key + key_pos, row_id);
-  key_pos += sizeof(uint64_t);
-  it_->Seek({(char *) key, key_pos});
-  if (it_->Valid() && it_->key().starts_with(prefix_)) {  // need check valid
+  rocksdb::Slice prefix_key{(char *) key, key_pos};
+  it_->Seek(prefix_key);
+  if (it_->Valid() && it_->key() == prefix_key) {  // need check valid
     position_ = CurrentRowId();
   } else {
     position_ = -1;
@@ -350,17 +292,17 @@ void DeltaIterator::MoveTo(int64_t row_id) {
   current_record_fetched_ = false;
 }
 
-bool DeltaIterator::IsInsertType() {
-  return CurrentType() == RecordType::kInsert && CurrentDeleteFlag() == 'n';
-}
+bool DeltaIterator::IsInsertType() { return CurrentType() == RecordType::kInsert && CurrentDeleteFlag() == 'n'; }
 
 bool DeltaIterator::RdbKeyValid() {
-  return it_->Valid() && it_->key().starts_with(prefix_);
+  uchar entry_key[sizeof(uint32_t)];
+  uint32_t table_id = table_->GetDeltaTableID();
+  index::be_store_index(entry_key, table_id);
+  rocksdb::Slice prefix = rocksdb::Slice((char *)entry_key, sizeof(uint32_t));
+  return it_->Valid() && it_->key().starts_with(prefix);
 }
 
-inline RecordType DeltaIterator::CurrentType() {
-  return static_cast<RecordType>(it_->value().data()[0]);
-}
+inline RecordType DeltaIterator::CurrentType() { return static_cast<RecordType>(it_->value().data()[0]); }
 
 inline uchar DeltaIterator::CurrentDeleteFlag() {
   return static_cast<uchar>((it_->value().data() + sizeof(RecordType) + sizeof(uint32))[0]);
