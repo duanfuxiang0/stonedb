@@ -664,33 +664,35 @@ void Engine::EncodeUpdateRecord(const std::string &table_path, int table_id,
       deltaRecord.field_head_[i] = 0;
       continue;
     }
-    Field *f = update_fields[col_id];
+    deltaRecord.update_mask_.set(i);
+
+    Field *f = update_fields[i];
     if (f == nullptr) {
       deltaRecord.null_mask_.set(col_id);
       deltaRecord.field_head_[col_id] = 0;
       continue;
     }
-    deltaRecord.update_mask_.set(i);
-    {  // resize
-      size_t length;
-      if (f->flags & BLOB_FLAG)
-        length = dynamic_cast<Field_blob *>(f)->get_length();
-      else
-        length = f->row_pack_length();
-      length += 8;
-      size_t used = ptr - buf.get();
-      if (buf_size - used < length) {
-        while (buf_size - used < length) {
-          buf_size *= 2;
-          if (buf_size > utils::MappedCircularBuffer::MAX_BUF_SIZE)
-            throw common::Exception(table_path + " Update data exceeds max buffer size " +
-                                    std::to_string(utils::MappedCircularBuffer::MAX_BUF_SIZE));
-        }
-        std::unique_ptr<char[]> old_buf = std::move(buf);
-        buf.reset(new char[buf_size]);
-        std::memcpy(buf.get(), old_buf.get(), used);
-        ptr = buf.get() + used;
+    
+    // resize
+    size_t length;
+    if (f->flags & BLOB_FLAG)
+      length = dynamic_cast<Field_blob *>(f)->get_length();
+    else
+      length = f->row_pack_length();
+    length += 8;
+    size_t used = ptr - buf.get();
+    // resize
+    if (buf_size - used < length) {
+      while (buf_size - used < length) {
+        buf_size *= 2;
+        if (buf_size > utils::MappedCircularBuffer::MAX_BUF_SIZE)
+          throw common::Exception(table_path + " Update data exceeds max buffer size " +
+                                  std::to_string(utils::MappedCircularBuffer::MAX_BUF_SIZE));
       }
+      std::unique_ptr<char[]> old_buf = std::move(buf);
+      buf.reset(new char[buf_size]);
+      std::memcpy(buf.get(), old_buf.get(), used);
+      ptr = buf.get() + used;
     }
     switch (f->type()) {
       case MYSQL_TYPE_TINY: {
