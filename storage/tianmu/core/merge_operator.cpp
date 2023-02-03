@@ -16,11 +16,15 @@ bool RecordMergeOperator::Merge(const rocksdb::Slice &key, const rocksdb::Slice 
     return true;
   }
   // [existing value] ptr
+  // [existing value] ptr
   const char *e_ptr = existing_value->data();
   RecordType existing_type = *(RecordType *)(e_ptr);
   // [value] ptr
+  // [value] ptr
   const char *ptr = value.data();
   RecordType type = *(RecordType *)(ptr);
+  // [new value] ptr
+  uint64_t value_buff_size = existing_value->size() + value.size();
   // [new value] ptr
   uint64_t value_buff_size = existing_value->size() + value.size();
   std::unique_ptr<char[]> value_buff(new char[value_buff_size]);
@@ -48,8 +52,32 @@ bool RecordMergeOperator::Merge(const rocksdb::Slice &key, const rocksdb::Slice 
 
       for (uint i = 0; i < updateRecord.field_count_; i++) {
         // this field length
-        insertRecord.field_len_[i] =
-            updateRecord.field_len_[i] > 0 ? updateRecord.field_len_[i] : e_insertRecord.field_len_[i];
+        insertRecord.field_head_[i] =
+            updateRecord.field_head_[i] > 0 ? updateRecord.field_head_[i] : e_insertRecord.field_head_[i];
+
+        // for debug
+        if (insertRecord.field_head_[i] > 1000) {
+          TIANMU_LOG(LogCtl_Level::DEBUG, "str_size error: %d", insertRecord.field_head_[i]);
+        }
+
+        {  // resize buf
+          size_t used = n_ptr - value_buff.get();
+          if (value_buff_size - used < insertRecord.field_head_[i]) {
+            while (value_buff_size - used < insertRecord.field_head_[i]) {
+              value_buff_size *= 2;
+              if (value_buff_size > 300) {
+                TIANMU_LOG(LogCtl_Level::DEBUG, "value_buff_size error: %d",value_buff_size);
+              }
+              if (value_buff_size > utils::MappedCircularBuffer::MAX_BUF_SIZE)
+                throw common::Exception(e_insertRecord.table_path_ + " INSERT data exceeds max buffer size " +
+                                        std::to_string(utils::MappedCircularBuffer::MAX_BUF_SIZE));
+            }
+            auto old_value_buff = std::move(value_buff);
+            value_buff = std::make_unique<char[]>(value_buff_size);
+            std::memcpy(value_buff.get(), old_value_buff.get(), used);
+            n_ptr = value_buff.get() + used;
+          }
+        }
         if (updateRecord.null_mask_[i]) {
           insertRecord.null_mask_.set(i);
           if (!e_insertRecord.null_mask_[i]) {
@@ -107,6 +135,24 @@ bool RecordMergeOperator::Merge(const rocksdb::Slice &key, const rocksdb::Slice 
         n_updateRecord.field_len_[i] =
             updateRecord.field_len_[i] > 0 ? updateRecord.field_len_[i] : e_updateRecord.field_len_[i];
 
+        {  // resize buff
+          size_t used = n_ptr - value_buff.get();
+          if (value_buff_size - used < n_updateRecord.field_head_[i]) {
+            while (value_buff_size - used < n_updateRecord.field_head_[i]) {
+              value_buff_size *= 2;
+              if (value_buff_size > 300) {
+                TIANMU_LOG(LogCtl_Level::DEBUG, "value_buff_size error: %d",value_buff_size);
+              }
+              if (value_buff_size > utils::MappedCircularBuffer::MAX_BUF_SIZE)
+                throw common::Exception(e_updateRecord.table_path_ + " INSERT data exceeds max buffer size " +
+                                        std::to_string(utils::MappedCircularBuffer::MAX_BUF_SIZE));
+            }
+            auto old_value_buff = std::move(value_buff);
+            value_buff = std::make_unique<char[]>(value_buff_size);
+            std::memcpy(value_buff.get(), old_value_buff.get(), used);
+            n_ptr = value_buff.get() + used;
+          }
+        }
         if (updateRecord.null_mask_[i]) {
           n_updateRecord.null_mask_.set(i);
           n_updateRecord.update_mask_.set(i);
