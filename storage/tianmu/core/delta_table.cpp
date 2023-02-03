@@ -110,7 +110,6 @@ void DeltaTable::Init(uint64_t base_row_num) {
   uchar entry_key[sizeof(uint32_t)];
   index::be_store_index(entry_key, delta_tid_);
   rocksdb::Slice prefix((char *)entry_key, sizeof(uint32_t));
-  rocksdb::Slice prefix((char *)entry_key, sizeof(uint32_t));
   rocksdb::ReadOptions read_options;
   read_options.total_order_seek = true;
   std::unique_ptr<rocksdb::Iterator> iter(kv_trans.GetDataIterator(read_options, cf_handle_));
@@ -143,6 +142,7 @@ void DeltaTable::AddInsertRecord(Transaction *tx, uint64_t row_id, std::unique_p
   rocksdb::Status status = kv_trans.PutData(cf_handle_, {(char *)key, key_pos}, {buf.get(), size});
   if (!status.ok()) {
     throw common::Exception("Error,kv_trans.PutData failed,date size: " + std::to_string(size) +
+                           
                            
                             " date:" + std::string(buf.get()));
   }
@@ -242,9 +242,13 @@ DeltaIterator::DeltaIterator(DeltaTable *table, const std::vector<bool> &attrs) 
   it_ = std::unique_ptr<rocksdb::Iterator>(ha_kvstore_->GetRdb()->NewIterator(read_options, table_->GetCFHandle()));
   uchar entry_key[sizeof(uint32_t)];
   uint32_t table_id = table_->GetDeltaTableID();
-  index::be_store_index(entry_key, table_id);
-  rocksdb::Slice prefix = rocksdb::Slice((char *)entry_key, sizeof(uint32_t));
-  it_->Seek(prefix);
+  index::be_store_index(entry_key + key_pos, table_id);
+  key_pos += sizeof(uint32_t);
+  prefix_ = rocksdb::Slice((char *)entry_key, key_pos);
+  it_->Seek(prefix_);
+  while (RdbKeyValid() && !IsInsertType()) {
+    it_->Next();
+  }
   if (RdbKeyValid()) {
     position_ = CurrentRowId();
     start_position_ = position_;

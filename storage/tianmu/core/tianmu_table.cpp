@@ -54,9 +54,13 @@ void TianmuTable::GetValueFromField(Field *f, Value &v) {
     case MYSQL_TYPE_BIT:
     case MYSQL_TYPE_LONGLONG:
       v.SetInt(f->val_int());
+    case MYSQL_TYPE_LONGLONG:
+      v.SetInt(f->val_int());
       break;
     case MYSQL_TYPE_DECIMAL:
     case MYSQL_TYPE_FLOAT:
+    case MYSQL_TYPE_DOUBLE:
+      v.SetDouble(f->val_real());
     case MYSQL_TYPE_DOUBLE:
       v.SetDouble(f->val_real());
       break;
@@ -184,6 +188,8 @@ class DelayedInsertParser final {
           case common::PackType::STR: {
             uint32_t str_len = rec_head.field_len_[i];
             auto buf = vc.Prepare(str_len);
+            uint32_t str_len = rec_head.field_len_[i];
+            auto buf = vc.Prepare(str_len);
             if (buf == nullptr) {
               throw std::bad_alloc();
             }
@@ -191,8 +197,12 @@ class DelayedInsertParser final {
             vc.ExpectedSize(str_len);
             ptr += str_len;
           } break;
+            std::memcpy(buf, ptr, str_len);
+            vc.ExpectedSize(str_len);
+            ptr += str_len;
+          } break;
           case common::PackType::INT: {
-            if (attr->Type().Lookup()) {
+            if (attr->Type().Lookup()) {  // todo(dfx): check this !
               uint32_t len = *(uint32_t *)ptr;
               ptr += sizeof(uint32_t);
               types::BString s(len == 0 ? "" : ptr, len);
@@ -202,6 +212,7 @@ class DelayedInsertParser final {
               ptr += len;
             } else {
               int64_t *buf = reinterpret_cast<int64_t *>(vc.Prepare(sizeof(int64_t)));
+              *buf = *(int64_t *)ptr;
               *buf = *(int64_t *)ptr;
 
               //              if (attr->GetIfAutoInc()) {
@@ -216,6 +227,8 @@ class DelayedInsertParser final {
               vc.ExpectedSize(sizeof(int64_t));
               ptr += sizeof(int64_t);
             }
+          } break;
+          default:
           } break;
           default:
             break;
@@ -1656,18 +1669,20 @@ uint64_t TianmuTable::MergeDeltaTable(system::IOParameters &iop) {
     rocksdb::Slice prefix((char *)key_buf, sizeof(uint32_t));
     // rocksdb seek
     auto cf_handle = m_delta->GetCFHandle();
+    uint32_t mem_id = m_delta->GetDeltaTableID();
+    index::be_store_index(entry_key + key_pos, mem_id);
+    key_pos += sizeof(uint32_t);
+    rocksdb::Slice prefix((char *)entry_key, key_pos);
     rocksdb::ReadOptions r_opts;
     r_opts.total_order_seek = true;
     std::unique_ptr<rocksdb::Iterator> iter(m_tx->KVTrans().GetDataIterator(r_opts, cf_handle));
     iter->Seek(prefix);
-#ifndef NDEBUG
     if (iter->Valid()) {
-      TIANMU_LOG(LogCtl_Level::DEBUG, "MergeDeltaTable curr table id: %d, row id: %d",
+      TIANMU_LOG(LogCtl_Level::INFO, "MergeDeltaTable curr table id: %d, row id: %d",
                  index::be_to_uint32(reinterpret_cast<const uchar *>(iter->key().data())),
                  index::be_to_uint64(reinterpret_cast<const uchar *>(iter->key().data()) + sizeof(uint32_t)));
     }
-#endif
-    while (need_merge_count > 0 && iter->Valid() && iter->key().starts_with(prefix)) {
+    while (iter->Valid() && iter->key().starts_with(prefix)) {
       auto key = iter->key();
       uint64_t row_id = index::be_to_uint64(reinterpret_cast<const uchar *>(key.data()) + sizeof(uint32_t));
       auto value = iter->value();
