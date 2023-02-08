@@ -260,6 +260,7 @@ bool DeltaIterator::operator==(const DeltaIterator &other) {
 bool DeltaIterator::operator!=(const DeltaIterator &other) { return !(*this == other); }
 
 void DeltaIterator::Next() {
+void DeltaIterator::Next() {
   it_->Next();
   if (RdbKeyValid()) {
     position_ = CurrentRowId();
