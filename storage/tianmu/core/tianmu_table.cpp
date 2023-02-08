@@ -1819,6 +1819,33 @@ int TianmuTable::AsyncParseDeleteRecords(std::vector<uint64_t> &delete_records) 
 
 /// TianmuIterator
 
+//TianmuIterator::TianmuIterator(TianmuIterator &&other) noexcept {
+//  std::swap(table, other.table);
+//  std::swap(position, other.position);
+//  std::swap(conn, other.conn);
+//  std::swap(current_record_fetched, other.current_record_fetched);
+//  std::swap(filter, other.filter);
+//  std::swap(it, other.it);
+//  std::swap(record, other.record);
+//  std::swap(values_fetchers, other.values_fetchers);
+//  std::swap(dp_locks, other.dp_locks);
+//  std::swap(attrs, other.attrs);
+//}
+//
+//TianmuIterator &TianmuIterator::operator=(TianmuIterator &&other) noexcept {
+//  std::swap(table, other.table);
+//  std::swap(position, other.position);
+//  std::swap(conn, other.conn);
+//  std::swap(current_record_fetched, other.current_record_fetched);
+//  std::swap(filter, other.filter);
+//  std::swap(it, other.it);
+//  std::swap(record, other.record);
+//  std::swap(values_fetchers, other.values_fetchers);
+//  std::swap(dp_locks, other.dp_locks);
+//  std::swap(attrs, other.attrs);
+//  return *this;
+//};
+
 TianmuIterator::TianmuIterator(TianmuTable *table, const std::vector<bool> &attrs, const Filter &raw_filter)
     : table(table), filter(std::make_shared<Filter>(raw_filter)), it(filter.get(), table->Getpackpower()) {
   Initialize(attrs);

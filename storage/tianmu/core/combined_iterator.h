@@ -24,11 +24,13 @@ class CombinedIterator {
   bool operator!=(const CombinedIterator &other);
   // goto next row
   void Next();
+  void Next();
   // get tianmu record col data
   std::shared_ptr<types::TianmuDataType> &GetBaseData(int col = -1);
   // get delta record row data
   std::string GetDeltaData();
   // move position to this row (:row_id)
+  void SeekTo(int64_t row_id);
   void SeekTo(int64_t row_id);
   // get the current row_id
   int64_t Position() const;

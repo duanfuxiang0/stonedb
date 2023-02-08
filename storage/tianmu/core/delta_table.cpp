@@ -264,7 +264,6 @@ bool DeltaIterator::operator==(const DeltaIterator &other) {
 bool DeltaIterator::operator!=(const DeltaIterator &other) { return !(*this == other); }
 
 void DeltaIterator::Next() {
-void DeltaIterator::Next() {
   it_->Next();
   if (RdbKeyValid()) {
     position_ = CurrentRowId();
@@ -281,7 +280,7 @@ std::string &DeltaIterator::GetData() {
 }
 
 void DeltaIterator::SeekTo(int64_t row_id) {
-  uchar key[sizeof(uint32_t) + sizeof(uint64_t)];
+  uchar key[12];
   size_t key_pos = 0;
   // table id
   index::be_store_index(key + key_pos, table_->GetDeltaTableID());
