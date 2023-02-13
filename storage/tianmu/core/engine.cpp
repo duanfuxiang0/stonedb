@@ -273,14 +273,15 @@ int Engine::Init(uint engine_slot) {
       std::function<void()> func;
     } jobs[] = {
         {60, [this]() { this->LogStat(); }},
-        {5, [this]() {
-          for (auto &delta : m_table_deltas) {
-            TIANMU_LOG(
-                LogCtl_Level::INFO,
-                "delta table id: %d current load id: %d, merge id: %d, row_id: %d",
-                delta.second->GetDeltaTableID(), delta.second->load_id.load(), delta.second->merge_id.load(), delta.second->row_id.load());
-          }
-        }},
+        {60,
+         [this]() {
+           for (auto &delta : m_table_deltas) {
+             TIANMU_LOG(LogCtl_Level::INFO,
+                        "delta table id: %d delta_size: %d, current load id: %d, merge id: %d, current row_id: %d",
+                        delta.second->GetDeltaTableID(), delta.second->load_id.load() - delta.second->merge_id.load(),
+                        delta.second->load_id.load(), delta.second->merge_id.load(), delta.second->row_id.load());
+           }
+         }},
         {60 * 5,
          []() {
            TIANMU_LOG(
@@ -297,7 +298,7 @@ int Engine::Init(uint engine_slot) {
     };
 
     int counter = 0;
-    const long loop_interval = 5;
+    const long loop_interval = 60;
 
     while (!exiting) {
       counter++;
@@ -1583,9 +1584,10 @@ void Engine::ProcessDeltaStoreMerge() {
         std::scoped_lock guard(mem_table_mutex);
         for (auto &[name, delta_table] : m_table_deltas) {
           uint64_t record_count = delta_table->CountRecords();
-          if (!delta_table->merge_running.load() && (record_count >= tianmu_sysvar_insert_numthreshold ||
+          if (!delta_table->merge_running.load() &&
+              (record_count >= tianmu_sysvar_insert_numthreshold ||
                (sleep_cnts.count(name) && sleep_cnts[name] > tianmu_sysvar_insert_cntthreshold))) {
-            delta_table->merge_running.store(true);   // start one thread on a table at a time.
+            delta_table->merge_running.store(true);  // start one thread on a table at a time.
             auto share = ha_tianmu_engine_->getTableShare(name);
             auto table_id = share->TabID();
             utils::BitSet null_mask(share->NumOfCols());
