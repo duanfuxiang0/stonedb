@@ -398,13 +398,12 @@ Engine::~Engine() {
   TIANMU_LOG(LogCtl_Level::INFO, "Tianmu engine destroyed.");
 }
 
-void Engine::EncodeInsertRecord(const std::string &table_path, int table_id, Field **field, size_t col, size_t blobs,
+void Engine::EncodeInsertRecord(const std::string &table_path, Field **field, size_t col, size_t blobs,
                                 std::unique_ptr<char[]> &buf, uint32_t &size, THD *thd) {
   size = blobs > 0 ? 4_MB : 128_KB;
   buf.reset(new char[size]);
   char *ptr = buf.get();
-  DeltaRecordHeadForInsert deltaRecord(DELTA_RECORD_NORMAL, table_id, table_path, col);
-  DeltaRecordHeadForInsert deltaRecord(DELTA_RECORD_NORMAL, table_id, table_path, col);
+  DeltaRecordHeadForInsert deltaRecord(DELTA_RECORD_NORMAL, col);
   ptr = deltaRecord.record_encode(ptr);
 
   for (uint i = 0; i < col; i++) {
@@ -644,13 +643,13 @@ void Engine::DecodeInsertRecord(const char *ptr, size_t size, Field **fields) {
   }
 }
 
-void Engine::EncodeUpdateRecord(const std::string &table_path, int table_id,
+void Engine::EncodeUpdateRecord(const std::string &table_path,
                                 std::unordered_map<uint, Field *> update_fields, size_t field_count, size_t blobs,
                                 std::unique_ptr<char[]> &buf, uint32_t &buf_size) {
   buf_size = blobs > 0 ? 4_MB : 128_KB;
   buf.reset(new char[buf_size]);
   char *ptr = buf.get();
-  DeltaRecordHeadForUpdate deltaRecord(table_id, table_path, field_count);
+  DeltaRecordHeadForUpdate deltaRecord(field_count);
   ptr = deltaRecord.record_encode(ptr);
 
   // fields...
@@ -831,15 +830,11 @@ void Engine::EncodeUpdateRecord(const std::string &table_path, int table_id,
   buf_size = ptr - buf.get();
 }
 
-void Engine::EncodeDeleteRecord(const std::string &table_path, int table_id, std::unique_ptr<char[]> &buf,
-                                uint32_t &buf_size) {
-  int32_t path_len = table_path.size();
-
-  buf_size = sizeof(RecordType) + sizeof(uint32_t) + sizeof(int32_t) + path_len + 1;
+void Engine::EncodeDeleteRecord(std::unique_ptr<char[]> &buf, uint32_t &buf_size) {
+  buf_size = sizeof(RecordType) + sizeof(uint32_t);
   buf.reset(new char[buf_size]);
   char *ptr = buf.get();
-  DeltaRecordHeadForDelete deltaRecord(table_id, table_path);
-  DeltaRecordHeadForDelete deltaRecord(table_id, table_path);
+  DeltaRecordHeadForDelete deltaRecord;
   ptr = deltaRecord.record_encode(ptr);
 }
 
@@ -1730,14 +1725,14 @@ void Engine::LogStat() {
   saved = tianmu_stat;
 }
 
-void Engine::InsertDelayed(const std::string &table_path, int table_id, TABLE *table) {
+void Engine::InsertDelayed(const std::string &table_path, TABLE *table) {
   my_bitmap_map *org_bitmap = dbug_tmp_use_all_columns(table, table->read_set);
   std::shared_ptr<void> defer(nullptr,
                               [table, org_bitmap](...) { dbug_tmp_restore_column_map(table->read_set, org_bitmap); });
 
   uint32_t buf_sz = 0;
   std::unique_ptr<char[]> buf;
-  EncodeInsertRecord(table_path, table_id, table->field, table->s->fields, table->s->blob_fields, buf, buf_sz,
+  EncodeInsertRecord(table_path, table->field, table->s->fields, table->s->blob_fields, buf, buf_sz,
                      table->in_use);
 
   unsigned int failed = 0;
@@ -1770,7 +1765,7 @@ void Engine::InsertToDelta(const std::string &table_path, std::shared_ptr<TableS
   // check & encode
   uint32_t buf_sz = 0;
   std::unique_ptr<char[]> buf;
-  EncodeInsertRecord(table_path, share->TabID(), table->field, table->s->fields, table->s->blob_fields, buf, buf_sz,
+  EncodeInsertRecord(table_path, table->field, table->s->fields, table->s->blob_fields, buf, buf_sz,
                      table->in_use);
   // insert to delta
   tm_table->InsertToDelta(row_id, std::move(buf), buf_sz);
@@ -1823,21 +1818,20 @@ void Engine::UpdateToDelta(const std::string &table_path, std::shared_ptr<TableS
 
   uint32_t buf_sz = 0;
   std::unique_ptr<char[]> buf;
-  EncodeUpdateRecord(table_path, share->TabID(), update_fields, table->s->fields, table->s->blob_fields, buf, buf_sz,
+  EncodeUpdateRecord(table_path, update_fields, table->s->fields, table->s->blob_fields, buf, buf_sz,
                      table->in_use);
 
   tm_table->UpdateToDelta(row_id, std::move(buf), buf_sz);
 }
 
-void Engine::DeleteToDelta(const std::string &table_path, std::shared_ptr<TableShare> &share, TABLE *table,
+void Engine::DeleteToDelta(std::shared_ptr<TableShare> &share, TABLE *table,
                            uint64_t row_id) {
   auto tm_table = share->GetSnapshot();
   tm_table->DeleteIndexForDelta(table, row_id);
 
   uint32_t buf_sz = 0;
   std::unique_ptr<char[]> buf;
-  EncodeDeleteRecord(table_path, share->TabID(),buf, buf_sz);
-  auto tm_table = share->GetSnapshot();
+  EncodeDeleteRecord(buf, buf_sz);
   tm_table->DeleteToDelta(row_id, std::move(buf), buf_sz);
 }
 
@@ -1849,7 +1843,7 @@ int Engine::InsertRow(const std::string &table_path, [[maybe_unused]] Transactio
       if (tianmu_sysvar_enable_rowstore) {
         InsertToDelta(table_path, share, table);
       } else {
-        InsertDelayed(table_path, share->TabID(), table);
+        InsertDelayed(table_path, table);
       }
       tianmu_stat.delta_insert++;
     } else {
@@ -1906,22 +1900,14 @@ int Engine::UpdateRow(const std::string &table_path, TABLE *table, std::shared_p
 int Engine::DeleteRow(const std::string &table_path, TABLE *table, std::shared_ptr<TableShare> &share,
                       uint64_t row_id) {
   int ret = 0;
-  try {
-    if (tianmu_sysvar_insert_delayed && table->s->tmp_table == NO_TMP_TABLE && tianmu_sysvar_enable_rowstore) {
-      DeleteToDelta(table_path, share, table, row_id);
-      tianmu_stat.delta_delete++;
-    } else {
-      auto tm_table = current_txn_->GetTableByPath(table_path);
-      ret = tm_table->Delete(table, row_id);
-    }
-    return ret;
-  } catch (common::Exception &e) {
-    TIANMU_LOG(LogCtl_Level::ERROR, "delta delete failed. %s %s", e.what(), e.trace().c_str());
-  } catch (std::exception &e) {
-    TIANMU_LOG(LogCtl_Level::ERROR, "delta delete failed. %s", e.what());
-  } catch (...) {
-    TIANMU_LOG(LogCtl_Level::ERROR, "delta delete failed.");
+  if (tianmu_sysvar_insert_delayed && table->s->tmp_table == NO_TMP_TABLE && tianmu_sysvar_enable_rowstore) {
+    DeleteToDelta(share, table, row_id);
+    tianmu_stat.delta_delete++;
+  } else {
+    auto tm_table = current_txn_->GetTableByPath(table_path);
+    ret = tm_table->Delete(table, row_id);
   }
+  return ret;
   if (tianmu_sysvar_insert_delayed) {
     tianmu_stat.failed_delta_delete++;
     ret = 1;
