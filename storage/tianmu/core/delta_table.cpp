@@ -38,6 +38,7 @@ std::shared_ptr<DeltaTable> DeltaTable::CreateDeltaTable(const std::shared_ptr<T
   std::string normalized_name;
   if (!index::NormalizeName(table_name, normalized_name)) {
     throw common::Exception("Normalized Delta Store name failed " + table_name);
+    throw common::Exception("Normalized Delta Store name failed " + table_name);
     return nullptr;
   }
   std::shared_ptr<DeltaTable> delta = ha_kvstore_->FindDeltaTable(normalized_name);
@@ -46,14 +47,15 @@ std::shared_ptr<DeltaTable> DeltaTable::CreateDeltaTable(const std::shared_ptr<T
 
   if (cf_prefix == index::DEFAULT_SYSTEM_CF_NAME)
     throw common::Exception("Insert Delta Store name should not be " + index::DEFAULT_SYSTEM_CF_NAME);
+    throw common::Exception("Insert Delta Store name should not be " + index::DEFAULT_SYSTEM_CF_NAME);
   std::string cf_name =
       cf_prefix.empty() ? index::DEFAULT_ROWSTORE_NAME : index::DEFAULT_DELTA_STORE_PREFIX + cf_prefix;
   uint32_t cf_id = ha_kvstore_->GetCfHandle(cf_name)->GetID();
   uint32_t delta_id = ha_kvstore_->GetNextIndexId();
   delta = std::make_shared<DeltaTable>(normalized_name, delta_id, cf_id);
   ha_kvstore_->KVWriteDeltaMeta(delta);
-  TIANMU_LOG(LogCtl_Level::INFO, "Create Delta Store: %s, CF ID: %d, Delta Store ID: %u", normalized_name.c_str(),
-             cf_id, delta_id);
+  TIANMU_LOG(LogCtl_Level::INFO, "Create Delta Store: %s, CF ID: %d, Delta Store ID: %u", normalized_name.c_str(), cf_id,
+             delta_id);
 
   return delta;
 }
