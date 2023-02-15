@@ -645,9 +645,9 @@ void Engine::DecodeInsertRecord(const char *ptr, size_t size, Field **fields) {
   }
 }
 
-void Engine::EncodeUpdateRecord(const std::string &table_path,
-                                std::unordered_map<uint, Field *> update_fields, size_t field_count, size_t blobs,
-                                std::unique_ptr<char[]> &buf, uint32_t &buf_size) {
+void Engine::EncodeUpdateRecord(const std::string &table_path, std::unordered_map<uint, Field *> update_fields,
+                                size_t field_count, size_t blobs, std::unique_ptr<char[]> &buf, uint32_t &buf_size,
+                                THD *thd) {
   buf_size = blobs > 0 ? 4_MB : 128_KB;
   buf.reset(new char[buf_size]);
   char *ptr = buf.get();
@@ -1734,8 +1734,7 @@ void Engine::InsertDelayed(const std::string &table_path, TABLE *table) {
 
   uint32_t buf_sz = 0;
   std::unique_ptr<char[]> buf;
-  EncodeInsertRecord(table_path, table->field, table->s->fields, table->s->blob_fields, buf, buf_sz,
-                     table->in_use);
+  EncodeInsertRecord(table_path, table->field, table->s->fields, table->s->blob_fields, buf, buf_sz, table->in_use);
 
   unsigned int failed = 0;
   while (true) {
@@ -1767,8 +1766,7 @@ void Engine::InsertToDelta(const std::string &table_path, std::shared_ptr<TableS
   // check & encode
   uint32_t buf_sz = 0;
   std::unique_ptr<char[]> buf;
-  EncodeInsertRecord(table_path, table->field, table->s->fields, table->s->blob_fields, buf, buf_sz,
-                     table->in_use);
+  EncodeInsertRecord(table_path, table->field, table->s->fields, table->s->blob_fields, buf, buf_sz, table->in_use);
   // insert to delta
   tm_table->InsertToDelta(row_id, std::move(buf), buf_sz);
 }
@@ -1820,14 +1818,12 @@ void Engine::UpdateToDelta(const std::string &table_path, std::shared_ptr<TableS
 
   uint32_t buf_sz = 0;
   std::unique_ptr<char[]> buf;
-  EncodeUpdateRecord(table_path, update_fields, table->s->fields, table->s->blob_fields, buf, buf_sz,
-                     table->in_use);
+  EncodeUpdateRecord(table_path, update_fields, table->s->fields, table->s->blob_fields, buf, buf_sz, table->in_use);
 
   tm_table->UpdateToDelta(row_id, std::move(buf), buf_sz);
 }
 
-void Engine::DeleteToDelta(std::shared_ptr<TableShare> &share, TABLE *table,
-                           uint64_t row_id) {
+void Engine::DeleteToDelta(std::shared_ptr<TableShare> &share, TABLE *table, uint64_t row_id) {
   auto tm_table = share->GetSnapshot();
   tm_table->DeleteIndexForDelta(table, row_id);
 
