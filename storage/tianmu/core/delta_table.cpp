@@ -149,7 +149,7 @@ void DeltaTable::AddInsertRecord(Transaction *tx, uint64_t row_id, std::unique_p
                             " date:" + std::string(buf.get()));
   }
   tx->AddInsertRowNum();
-  if (tx->GetInsertRowNum() >= tianmu_sysvar_insert_write_batch_size) {
+  if(tx->GetInsertRowNum() >= tianmu_sysvar_insert_write_batch_size){
     kv_trans.Commit();
     kv_trans.ResetWriteBatch();
     kv_trans.Acquiresnapshot();
