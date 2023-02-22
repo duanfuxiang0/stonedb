@@ -111,7 +111,7 @@ void TianmuAttr::Create(const fs::path &dir, const AttributeTypeInfo &ati, uint8
 
   // auto_increment
   if (ati.AutoInc() && auto_inc_value != 0) {
-    hdr.auto_inc_next = --auto_inc_value;
+    hdr.auto_inc = --auto_inc_value;
   }
 
   // create version directory
