@@ -19,6 +19,7 @@
 #include "core/table_share.h"
 #include "core/transaction.h"
 #include "delta_table.h"
+#include "delta_table.h"
 #include "index/kv_transaction.h"
 #include "index/rdb_meta_manager.h"
 
@@ -259,7 +260,7 @@ bool DeltaTable::BaseRowIsDeleted(Transaction *tx, uint64_t row_id) const {
 
 DeltaIterator::DeltaIterator(DeltaTable *table, const std::vector<bool> &attrs) : table_(table), attrs_(attrs) {
   // get snapshot for rocksdb, snapshot will release when DeltaIterator is destructured
-  current_txn_->KVTrans().Commit();
+  //current_txn_->KVTrans().Commit();
   auto snapshot = ha_kvstore_->GetRdbSnapshot();
   rocksdb::ReadOptions read_options;
   read_options.total_order_seek = true;
@@ -271,9 +272,9 @@ DeltaIterator::DeltaIterator(DeltaTable *table, const std::vector<bool> &attrs) 
   key_pos += sizeof(uint32_t);
   prefix_ = rocksdb::Slice((char *)entry_key, key_pos);
   it_->Seek(prefix_);
-  while (RdbKeyValid() && !IsInsertType()) {
-    it_->Next();
-  }
+ // while (RdbKeyValid()) {
+  //  it_->Next();
+  //}
   if (RdbKeyValid()) {
     position_ = CurrentRowId();
     start_position_ = position_;
