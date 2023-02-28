@@ -149,7 +149,7 @@ void DeltaTable::AddInsertRecord(Transaction *tx, uint64_t row_id, std::unique_p
                             " date:" + std::string(buf.get()));
   }
   tx->AddInsertRowNum();
-  if(tx->GetInsertRowNum() >= tianmu_sysvar_insert_write_batch_size){
+  if (tx->GetInsertRowNum() >= tianmu_sysvar_insert_write_batch_size) {
     kv_trans.Commit();
     kv_trans.ResetWriteBatch();
     kv_trans.Acquiresnapshot();
@@ -237,6 +237,7 @@ bool DeltaTable::BaseRowIsDeleted(Transaction *tx, uint64_t row_id) const {
 
 DeltaIterator::DeltaIterator(DeltaTable *table, const std::vector<bool> &attrs) : table_(table), attrs_(attrs) {
   // get snapshot for rocksdb, snapshot will release when DeltaIterator is destructured
+  current_txn_->KVTrans().Commit();
   auto snapshot = ha_kvstore_->GetRdbSnapshot();
   rocksdb::ReadOptions read_options;
   read_options.total_order_seek = true;
