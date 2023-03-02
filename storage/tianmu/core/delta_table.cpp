@@ -75,28 +75,6 @@ common::ErrorCode DeltaTable::Rename(const std::string &to) {
   return common::ErrorCode::SUCCESS;
 }
 
-bool DeltaTable::ExistDeleteRow(Transaction *tx, int64_t obj) {
-  uchar key[12];
-  size_t key_pos = 0;
-  index::KVTransaction &kv_trans = tx->KVTrans();
-  // table id
-  index::be_store_index(key + key_pos, delta_tid_);
-  key_pos += sizeof(uint32_t);
-  // row id
-  index::be_store_uint64(key + key_pos, obj);
-  key_pos += sizeof(uint64_t);
-  std::string delta_record;
-  rocksdb::Status status = kv_trans.GetData(cf_handle_, {(char *)key, key_pos}, &delta_record);
-  if (!status.ok() || delta_record.empty()) {
-    return false;
-  }
-  auto rtype = *reinterpret_cast<RecordType *>(const_cast<char *>(delta_record.data()));
-  if (rtype == RecordType::kDelete) {
-    return true;
-  }
-  return false;
-}
-
 void DeltaTable::FillRowByRowid(Transaction *tx, TABLE *table, int64_t obj) {
   uchar key[sizeof(uint32_t) + sizeof(uint64_t)];
   size_t key_pos = 0;
@@ -260,7 +238,7 @@ bool DeltaTable::BaseRowIsDeleted(Transaction *tx, uint64_t row_id) const {
 
 DeltaIterator::DeltaIterator(DeltaTable *table, const std::vector<bool> &attrs) : table_(table), attrs_(attrs) {
   // get snapshot for rocksdb, snapshot will release when DeltaIterator is destructured
-  //current_txn_->KVTrans().Commit();
+  // current_txn_->KVTrans().Commit();
   auto snapshot = ha_kvstore_->GetRdbSnapshot();
   rocksdb::ReadOptions read_options;
   read_options.total_order_seek = true;
@@ -268,11 +246,10 @@ DeltaIterator::DeltaIterator(DeltaTable *table, const std::vector<bool> &attrs) 
   it_ = std::unique_ptr<rocksdb::Iterator>(ha_kvstore_->GetRdb()->NewIterator(read_options, table_->GetCFHandle()));
   uchar entry_key[sizeof(uint32_t)];
   uint32_t table_id = table_->GetDeltaTableID();
-  index::be_store_index(entry_key + key_pos, table_id);
-  key_pos += sizeof(uint32_t);
-  prefix_ = rocksdb::Slice((char *)entry_key, key_pos);
-  it_->Seek(prefix_);
- // while (RdbKeyValid()) {
+  index::be_store_index(entry_key, table_id);
+  rocksdb::Slice prefix = rocksdb::Slice((char *)entry_key, sizeof(uint32_t));
+  it_->Seek(prefix);
+  // while (RdbKeyValid()) {
   //  it_->Next();
   //}
   if (RdbKeyValid()) {
@@ -306,7 +283,7 @@ std::string &DeltaIterator::GetData() {
 }
 
 void DeltaIterator::SeekTo(int64_t row_id) {
-  uchar key[12];
+  uchar key[sizeof(uint32_t) + sizeof(uint64_t)];
   size_t key_pos = 0;
   // table id
   index::be_store_index(key + key_pos, table_->GetDeltaTableID());
