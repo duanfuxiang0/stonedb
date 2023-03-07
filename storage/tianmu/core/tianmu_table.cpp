@@ -76,8 +76,6 @@ void TianmuTable::GetValueFromField(Field *f, Value &v, size_t col) {
     case MYSQL_TYPE_FLOAT:
     case MYSQL_TYPE_DOUBLE:
       v.SetDouble(f->val_real());
-    case MYSQL_TYPE_DOUBLE:
-      v.SetDouble(f->val_real());
       break;
     case MYSQL_TYPE_NEWDECIMAL: {
       auto dec_f = dynamic_cast<Field_new_decimal *>(f);
@@ -187,7 +185,7 @@ class DelayedInsertParser final {
       }
       auto ptr = const_cast<const char *>((*vec)[processed].get());
       DeltaRecordHeadForInsert rec_head;
-      ptr = rec_head.record_decode(ptr);
+      ptr = rec_head.recordDecode(ptr);
       for (uint i = 0; i < attrs.size(); i++) {
         auto &vc = value_buffers[i];
         if (rec_head.is_deleted_ == DELTA_RECORD_DELETE) {
@@ -203,15 +201,9 @@ class DelayedInsertParser final {
           case common::PackType::STR: {
             uint32_t str_len = rec_head.field_len_[i];
             auto buf = vc.Prepare(str_len);
-            uint32_t str_len = rec_head.field_len_[i];
-            auto buf = vc.Prepare(str_len);
             if (buf == nullptr) {
               throw std::bad_alloc();
             }
-            std::memcpy(buf, ptr, str_len);
-            vc.ExpectedSize(str_len);
-            ptr += str_len;
-          } break;
             std::memcpy(buf, ptr, str_len);
             vc.ExpectedSize(str_len);
             ptr += str_len;
@@ -228,17 +220,7 @@ class DelayedInsertParser final {
             } else {
               int64_t *buf = reinterpret_cast<int64_t *>(vc.Prepare(sizeof(int64_t)));
               *buf = *(int64_t *)ptr;
-              *buf = *(int64_t *)ptr;
 
-              //              if (attr->GetIfAutoInc()) {
-              //                if (*buf == 0)  // Value of auto inc column was not assigned by user
-              //                  *buf = attr->AutoIncNext();
-              //                if (static_cast<uint64_t>(*buf) > attr->GetAutoInc()) {
-              //                  if (*buf > 0 || ((attr->TypeName() == common::ColumnType::BIGINT) &&
-              //                  attr->GetIfUnsigned()))
-              //                    attr->SetAutoInc(*buf);
-              //                }
-              //              }
               //              if (attr->GetIfAutoInc()) {
               //                if (*buf == 0)  // Value of auto inc column was not assigned by user
               //                  *buf = attr->AutoIncNext();
@@ -251,8 +233,6 @@ class DelayedInsertParser final {
               vc.ExpectedSize(sizeof(int64_t));
               ptr += sizeof(int64_t);
             }
-          } break;
-          default:
           } break;
           default:
             break;
@@ -309,7 +289,7 @@ class DelayedUpdateParser final {
     for (auto &[row_id, row] : *update_rows) {
       auto row_ptr = const_cast<const char *>(row.get());
       DeltaRecordHeadForUpdate rec_head;
-      row_ptr = rec_head.record_decode(row_ptr);
+      row_ptr = rec_head.recordDecode(row_ptr);
       for (uint col_id = 0; col_id < attrs.size(); col_id++) {
         core::Value val;
         if (!rec_head.update_mask_[col_id]) {
@@ -882,15 +862,13 @@ void TianmuTable::Field2VC(Field *f, loader::ValueCache &vc, size_t col) {
       double value = f->val_real();
       *reinterpret_cast<int64_t *>(vc.Prepare(sizeof(int64_t))) = *reinterpret_cast<int64_t *>(&value);
       vc.ExpectedSize(sizeof(int64_t));
-    }
-      break;
+    } break;
     case MYSQL_TYPE_NEWDECIMAL: {
       auto dec_f = dynamic_cast<Field_new_decimal *>(f);
       *reinterpret_cast<int64_t *>(vc.Prepare(sizeof(int64_t))) =
           std::lround(dec_f->val_real() * types::PowOfTen(dec_f->dec));
       vc.ExpectedSize(sizeof(int64_t));
-    }
-      break;
+    } break;
     case MYSQL_TYPE_TIMESTAMP: {
       MYSQL_TIME my_time;
       std::memset(&my_time, 0, sizeof(my_time));
@@ -911,8 +889,7 @@ void TianmuTable::Field2VC(Field *f, loader::ValueCache &vc, size_t col) {
 
       *reinterpret_cast<int64_t *>(vc.Prepare(sizeof(int64_t))) = dt.val;
       vc.ExpectedSize(sizeof(int64_t));
-    }
-      break;
+    } break;
     case MYSQL_TYPE_TIME:
     case MYSQL_TYPE_TIME2:
     case MYSQL_TYPE_DATE:
@@ -933,16 +910,14 @@ void TianmuTable::Field2VC(Field *f, loader::ValueCache &vc, size_t col) {
 
       *reinterpret_cast<int64_t *>(vc.Prepare(sizeof(int64_t))) = dt.val;
       vc.ExpectedSize(sizeof(int64_t));
-    }
-      break;
+    } break;
     case MYSQL_TYPE_YEAR:  // what the hell?
     {
       types::DT dt = {};
       dt.year = f->val_int();
       *reinterpret_cast<int64_t *>(vc.Prepare(sizeof(int64_t))) = dt.val;
       vc.ExpectedSize(sizeof(int64_t));
-    }
-      break;
+    } break;
     case MYSQL_TYPE_VARCHAR:
     case MYSQL_TYPE_TINY_BLOB:
     case MYSQL_TYPE_MEDIUM_BLOB:
@@ -962,8 +937,7 @@ void TianmuTable::Field2VC(Field *f, loader::ValueCache &vc, size_t col) {
         std::memcpy(ptr, buf.ptr(), buf.length());
         vc.ExpectedSize(buf.length());
       }
-    }
-      break;
+    } break;
     case MYSQL_TYPE_SET:
     case MYSQL_TYPE_ENUM:
     case MYSQL_TYPE_GEOMETRY:
@@ -1050,8 +1024,8 @@ int TianmuTable::Update(TABLE *table, uint64_t row_id, const uchar *old_data, uc
 int TianmuTable::Delete(TABLE *table, uint64_t row_id) {
   utils::result_set<void> res;
   for (uint i = 0; i < table->s->fields; i++) {
-    res.insert(ha_tianmu_engine_->delete_or_update_thread_pool.add_task(&core::TianmuTable::DeleteItem, this,
-                                                                        row_id, i, current_txn_));
+    res.insert(ha_tianmu_engine_->delete_or_update_thread_pool.add_task(&core::TianmuTable::DeleteItem, this, row_id, i,
+                                                                        current_txn_));
   }
   res.get_all_with_except();
   return 0;
@@ -1208,9 +1182,9 @@ size_t TianmuTable::max_row_length(std::vector<loader::ValueCache> &vcs, uint ro
       case common::ColumnType::STRING: {
         row_len += (2 * vcs[att].Size(row));  // real data len
         row_len += delimiter;
-      }
-        break;
-      default:row_len += 255;  // max Display Width(M) ; number(255), datetime(19)
+      } break;
+      default:
+        row_len += 255;  // max Display Width(M) ; number(255), datetime(19)
         row_len += delimiter;
 
         break;
@@ -1230,7 +1204,7 @@ int TianmuTable::binlog_insert2load_log_event(system::IOParameters &iop) {
   uint32 fname_start_pos = 0;
   uint32 fname_end_pos = 0;
 
-  lf_info = (LOAD_FILE_INFO *) iop.GetLogInfo();
+  lf_info = (LOAD_FILE_INFO *)iop.GetLogInfo();
   THD *thd = lf_info->thd;
 
   auto pa = fs::path(iop.GetTableName());
@@ -1266,7 +1240,7 @@ int TianmuTable::binlog_insert2load_log_event(system::IOParameters &iop) {
 
   std::memcpy(load_data_query, p, pl);
   Execute_load_query_log_event e(thd, load_data_query, pl, static_cast<uint>(fname_start_pos - 1),
-                                 static_cast<uint>(fname_end_pos), (binary_log::enum_load_dup_handling) 0, TRUE, FALSE,
+                                 static_cast<uint>(fname_end_pos), (binary_log::enum_load_dup_handling)0, TRUE, FALSE,
                                  FALSE, 0);
   return mysql_bin_log.write_event(&e);
 }
@@ -1282,7 +1256,7 @@ int TianmuTable::binlog_insert2load_block(std::vector<loader::ValueCache> &vcs, 
   static char ESCAPE_CHAR = '\\';
   static std::string ENCLOSE("``");
 
-  LOAD_FILE_INFO *lf_info = (LOAD_FILE_INFO *) iop.GetLogInfo();
+  LOAD_FILE_INFO *lf_info = (LOAD_FILE_INFO *)iop.GetLogInfo();
   if (lf_info == nullptr || lf_info->thd->is_current_stmt_binlog_format_row())
     return 0;
   max_event_size = lf_info->thd->variables.max_allowed_packet;
@@ -1327,7 +1301,7 @@ int TianmuTable::binlog_insert2load_block(std::vector<loader::ValueCache> &vcs, 
         case common::ColumnType::BIGINT:
         case common::ColumnType::BIT: {
           types::BString s;
-          int64_t v = *(int64_t *) (vcs[att].GetDataBytesPointer(i));
+          int64_t v = *(int64_t *)(vcs[att].GetDataBytesPointer(i));
           if (v == common::NULL_VALUE_64)
             s = types::BString();
           else {
@@ -1341,11 +1315,10 @@ int TianmuTable::binlog_insert2load_block(std::vector<loader::ValueCache> &vcs, 
             *ptr = FIELDS_DELIMITER;
             ptr += sizeof(FIELDS_DELIMITER);
           }
-        }
-          break;
+        } break;
         case common::ColumnType::TIMESTAMP: {
           types::BString s;
-          int64_t v = *(int64_t *) (vcs[att].GetDataBytesPointer(i));
+          int64_t v = *(int64_t *)(vcs[att].GetDataBytesPointer(i));
           if (v == common::NULL_VALUE_64) {
             s = types::TianmuDateTime().ToBString();
           } else {
@@ -1359,14 +1332,13 @@ int TianmuTable::binlog_insert2load_block(std::vector<loader::ValueCache> &vcs, 
             *ptr = FIELDS_DELIMITER;
             ptr += sizeof(FIELDS_DELIMITER);
           }
-        }
-          break;
+        } break;
         case common::ColumnType::YEAR:
         case common::ColumnType::TIME:
         case common::ColumnType::DATETIME:
         case common::ColumnType::DATE: {
           types::BString s;
-          int64_t v = *(int64_t *) (vcs[att].GetDataBytesPointer(i));
+          int64_t v = *(int64_t *)(vcs[att].GetDataBytesPointer(i));
           if (v == common::NULL_VALUE_64) {
             s = types::TianmuDateTime().ToBString();
           } else {
@@ -1379,8 +1351,7 @@ int TianmuTable::binlog_insert2load_block(std::vector<loader::ValueCache> &vcs, 
             *ptr = FIELDS_DELIMITER;
             ptr += sizeof(FIELDS_DELIMITER);
           }
-        }
-          break;
+        } break;
         case common::ColumnType::VARCHAR:
         case common::ColumnType::VARBYTE:
         case common::ColumnType::BIN:
@@ -1418,15 +1389,14 @@ int TianmuTable::binlog_insert2load_block(std::vector<loader::ValueCache> &vcs, 
             *ptr = FIELDS_DELIMITER;
             ptr += sizeof(FIELDS_DELIMITER);
           }
-        }
-          break;
+        } break;
         case common::ColumnType::DATETIME_N:
         case common::ColumnType::TIMESTAMP_N:
         case common::ColumnType::TIME_N:
         case common::ColumnType::UNK:
         default:
           throw common::Exception("Unsupported Tianmu Type " +
-              std::to_string(static_cast<unsigned char>(m_attrs[att]->TypeName())));
+                                  std::to_string(static_cast<unsigned char>(m_attrs[att]->TypeName())));
           break;
       }
     }
@@ -1434,7 +1404,7 @@ int TianmuTable::binlog_insert2load_block(std::vector<loader::ValueCache> &vcs, 
     ptr += sizeof(LINES_DELIMITER);
   }
   buffer = block_buf.get();
-  for (block_len = (uint) (ptr - block_buf.get()); block_len > 0;
+  for (block_len = (uint)(ptr - block_buf.get()); block_len > 0;
        buffer += std::min(block_len, max_event_size), block_len -= std::min(block_len, max_event_size)) {
     if (lf_info->wrote_create_file) {
       Append_block_log_event a(lf_info->thd, lf_info->thd->db().str, buffer, std::min(block_len, max_event_size),
@@ -1453,123 +1423,6 @@ int TianmuTable::binlog_insert2load_block(std::vector<loader::ValueCache> &vcs, 
   return 0;
 }
 
-class DelayedInsertParser final {
- public:
-  DelayedInsertParser(std::vector<std::unique_ptr<TianmuAttr>> &attrs, std::vector<std::unique_ptr<char[]>> *vec,
-                      uint packsize, std::shared_ptr<index::TianmuTableIndex> index)
-      : pack_size(packsize), attrs(attrs), vec(vec), index_table(index) {}
-
-  uint GetRows(uint no_of_rows, std::vector<loader::ValueCache> &value_buffers) {
-    int64_t start_row = attrs[0]->NumOfObj();
-
-    value_buffers.reserve(attrs.size());
-    for (size_t i = 0; i < attrs.size(); i++) {
-      value_buffers.emplace_back(pack_size, pack_size * 128);
-    }
-
-    uint no_of_rows_returned;
-    for (no_of_rows_returned = 0; no_of_rows_returned < no_of_rows; no_of_rows_returned++) {
-      if (processed == vec->size()) {
-        // no more to parse
-        return no_of_rows_returned;
-      }
-
-      auto ptr = (*vec)[processed].get();
-      // int  tid = *(int32_t *)ptr;
-      ptr += sizeof(int32_t);
-      std::string path(ptr);
-      ptr += path.length() + 1;
-      utils::BitSet null_mask(attrs.size(), ptr);
-      ptr += null_mask.data_size();
-      for (uint i = 0; i < attrs.size(); i++) {
-        auto &vc = value_buffers[i];
-        if (null_mask[i]) {
-          vc.ExpectedNull(true);
-          continue;
-        }
-        auto &attr(attrs[i]);
-        switch (attr->GetPackType()) {
-          case common::PackType::STR: {
-            uint32_t len = *(uint32_t *)ptr;
-            ptr += sizeof(uint32_t);
-            auto buf = vc.Prepare(len);
-            if (buf == nullptr) {
-              throw std::bad_alloc();
-            }
-            std::memcpy(buf, ptr, len);
-            vc.ExpectedSize(len);
-            ptr += len;
-          } break;
-          case common::PackType::INT: {
-            if (attr->Type().Lookup()) {
-              uint32_t len = *(uint32_t *)ptr;
-              ptr += sizeof(uint32_t);
-              types::BString s(len == 0 ? "" : ptr, len);
-              int64_t *buf = reinterpret_cast<int64_t *>(vc.Prepare(sizeof(int64_t)));
-              *buf = attr->EncodeValue_T(s, true);
-              vc.ExpectedSize(sizeof(int64_t));
-              ptr += len;
-            } else {
-              int64_t *buf = reinterpret_cast<int64_t *>(vc.Prepare(sizeof(int64_t)));
-              *buf = *(int64_t *)ptr;
-
-              if (attr->GetIfAutoInc()) {
-                if (*buf == 0)  // Value of auto inc column was not assigned by user
-                  *buf = attr->AutoIncNext();
-                if (static_cast<uint64_t>(*buf) > attr->GetAutoInc()) {
-                  if (*buf > 0 || ((attr->TypeName() == common::ColumnType::BIGINT) && attr->GetIfUnsigned()))
-                    attr->SetAutoInc(*buf);
-                }
-              }
-              vc.ExpectedSize(sizeof(int64_t));
-              ptr += sizeof(int64_t);
-            }
-          } break;
-          default:
-            break;
-        }
-      }
-      for (auto &vc : value_buffers) {
-        vc.Commit();
-      }
-
-      processed++;
-      // insert index into kvstore
-      if (InsertIndex(value_buffers, start_row) != common::ErrorCode::SUCCESS) {
-        for (auto &vc : value_buffers) {
-          vc.Rollback();
-        }
-      }
-    }
-    return no_of_rows_returned;
-  }
-
-  common::ErrorCode InsertIndex(std::vector<loader::ValueCache> &vcs, int64_t start_row) {
-    if (!index_table)
-      return common::ErrorCode::SUCCESS;
-
-    size_t row_idx = vcs[0].NumOfValues() - 1;
-    std::vector<uint> cols = index_table->KeyCols();
-    std::vector<std::string> fields;
-    for (auto &col : cols) {
-      fields.emplace_back(vcs[col].GetDataBytesPointer(row_idx), vcs[col].Size(row_idx));
-    }
-
-    if (index_table->InsertIndex(current_txn_, fields, start_row + row_idx) == common::ErrorCode::DUPP_KEY) {
-      TIANMU_LOG(LogCtl_Level::DEBUG, "Delay insert discard this row for duplicate key");
-      return common::ErrorCode::DUPP_KEY;
-    }
-    return common::ErrorCode::SUCCESS;
-  }
-
- private:
-  uint processed = 0;
-  uint pack_size;
-  std::vector<std::unique_ptr<TianmuAttr>> &attrs;
-  std::vector<std::unique_ptr<char[]>> *vec;
-  std::shared_ptr<index::TianmuTableIndex> index_table;
-};
-
 uint64_t TianmuTable::ProcessDelayed(system::IOParameters &iop) {
   std::string str(basename(const_cast<char *>(iop.Path())));
   auto vec = reinterpret_cast<std::vector<std::unique_ptr<char[]>> *>(std::stol(str));
@@ -1580,7 +1433,7 @@ uint64_t TianmuTable::ProcessDelayed(system::IOParameters &iop) {
 
   uint to_prepare, no_of_rows_returned;
   do {
-    to_prepare = share->PackSize() - (int) (m_attrs[0]->NumOfObj() % share->PackSize());
+    to_prepare = share->PackSize() - (int)(m_attrs[0]->NumOfObj() % share->PackSize());
     std::vector<loader::ValueCache> vcs;
     no_of_rows_returned = parser.GetRows(to_prepare, vcs);
     size_t real_loaded_rows = vcs[0].NumOfValues();
@@ -1701,8 +1554,9 @@ uint64_t TianmuTable::MergeDeltaTable(system::IOParameters &iop) {
     r_opts.total_order_seek = true;
     std::unique_ptr<rocksdb::Iterator> iter(m_tx->KVTrans().GetDataIterator(r_opts, cf_handle));
     iter->Seek(prefix);
+#ifndef NDEBUG
     if (iter->Valid()) {
-      TIANMU_LOG(LogCtl_Level::INFO, "MergeDeltaTable curr table id: %d, row id: %d",
+      TIANMU_LOG(LogCtl_Level::DEBUG, "MergeDeltaTable curr table id: %d, row id: %d",
                  index::be_to_uint32(reinterpret_cast<const uchar *>(iter->key().data())),
                  index::be_to_uint64(reinterpret_cast<const uchar *>(iter->key().data()) + sizeof(uint32_t)));
     }
@@ -1878,8 +1732,7 @@ void TianmuIterator::Initialize(const std::vector<bool> &attrs_) {
       attrs.push_back(attr);
       record.emplace_back(attr->ValuePrototype(false).Clone());
       values_fetchers.push_back(
-          [attr, &capture0 = *record[attr_id]](auto &&PH1) { attr->GetValueData(std::forward<decltype(PH1)>(PH1), capture0, false); });
-//      std::bind(&TianmuAttr::GetValueData, attr, std::placeholders::_1, std::ref(*record[attr_id]), false));
+          std::bind(&TianmuAttr::GetValueData, attr, std::placeholders::_1, std::ref(*record[attr_id]), false));
     } else {
       record.emplace_back(table->GetAttr(attr_id)->ValuePrototype(false).Clone());
     }

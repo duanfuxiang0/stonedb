@@ -264,6 +264,7 @@ class TianmuAttr final : public mm::TraceableObject, public PhysicalColumn, publ
     return;
   }
   uint64_t GetAutoInc() const { return m_share->auto_inc_.load(); }
+  uint64_t GetAutoIncInfo() const { return m_share->auto_inc_.load() + 1; }
   void SetAutoInc(uint64_t v) {
     backup_auto_inc_next_ = m_share->auto_inc_.load();
     m_share->auto_inc_.store(v);

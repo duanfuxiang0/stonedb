@@ -39,8 +39,6 @@ CombinedIterator::CombinedIterator(TianmuTable *base_table, const std::vector<bo
 
 bool CombinedIterator::operator==(const CombinedIterator &o) {
   return is_base_ == o.is_base_ && (is_base_ ? base_iter_ == o.base_iter_ : delta_iter_ == o.delta_iter_);
-bool CombinedIterator::operator==(const CombinedIterator &o) {
-  return is_base_ == o.is_base_ && (is_base_ ? base_iter_ == o.base_iter_ : delta_iter_ == o.delta_iter_);
 }
 
 bool CombinedIterator::operator!=(const CombinedIterator &other) { return !(*this == other); }

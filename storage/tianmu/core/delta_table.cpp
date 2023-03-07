@@ -19,7 +19,6 @@
 #include "core/table_share.h"
 #include "core/transaction.h"
 #include "delta_table.h"
-#include "delta_table.h"
 #include "index/kv_transaction.h"
 #include "index/rdb_meta_manager.h"
 
@@ -39,7 +38,6 @@ std::shared_ptr<DeltaTable> DeltaTable::CreateDeltaTable(const std::shared_ptr<T
   std::string normalized_name;
   if (!index::NormalizeName(table_name, normalized_name)) {
     throw common::Exception("Normalized Delta Store name failed " + table_name);
-    throw common::Exception("Normalized Delta Store name failed " + table_name);
     return nullptr;
   }
   std::shared_ptr<DeltaTable> delta = ha_kvstore_->FindDeltaTable(normalized_name);
@@ -47,7 +45,6 @@ std::shared_ptr<DeltaTable> DeltaTable::CreateDeltaTable(const std::shared_ptr<T
     return delta;
 
   if (cf_prefix == index::DEFAULT_SYSTEM_CF_NAME)
-    throw common::Exception("Insert Delta Store name should not be " + index::DEFAULT_SYSTEM_CF_NAME);
     throw common::Exception("Insert Delta Store name should not be " + index::DEFAULT_SYSTEM_CF_NAME);
   std::string cf_name =
       cf_prefix.empty() ? index::DEFAULT_ROWSTORE_NAME : index::DEFAULT_DELTA_STORE_PREFIX + cf_prefix;
@@ -145,8 +142,6 @@ void DeltaTable::AddInsertRecord(Transaction *tx, uint64_t row_id, std::unique_p
   rocksdb::Status status = kv_trans.PutData(cf_handle_, {(char *)key, key_pos}, {buf.get(), size});
   if (!status.ok()) {
     throw common::Exception("Error,kv_trans.PutData failed,date size: " + std::to_string(size) +
-                           
-                           
                             " date:" + std::string(buf.get()));
   }
   tx->AddInsertRowNum();
